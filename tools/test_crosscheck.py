@@ -141,13 +141,24 @@ def _n(m, pos, **k):
                  "pos": pos}, **k)
 
 
-def test_accidental_mismatch_blocks():
-    # 우리: ♮ 로 붙임(B4) / homr: Bb4 — 같은 자리, 다른 임시표 → 막는다
+def test_accidental_mismatch_takes_homr():
+    # 우리: ♮ 로 붙임(B4) / homr: Bb4 — 같은 자리, 다른 임시표 → homr 임시표를 쓴다
     s = {"beats": 4, "sourceFifths": 1, "systems": [{"system": 0, "srcFifths": 1, "notes": [
-        _n(1, "G4"), _n(1, "A4"), _n(1, "B4", natural=True), _n(1, "C5")]}]}
-    r = merge(s, {"dur": [[["1", "1", "1", "1"]]], "pitch": [[["G4", "A4", "Bb4", "C5"]]],
+        _n(1, "G4"), _n(1, "B4"), _n(1, "B4", natural=True), _n(1, "C5")]}]}
+    r = merge(s, {"dur": [[["1", "1", "1", "1"]]], "pitch": [[["G4", "B4", "Bb4", "C5"]]],
                   "key": [[1]]})
-    assert r["accDiff"] == 1 and any("임시표" in x for x in s["systems"][0]["review"])
+    b = s["systems"][0]["notes"][2]
+    assert r["accAdopted"] == 1 and b["accidental"] == -1 and not b.get("natural")
+    assert not s["systems"][0].get("review")
+
+
+def test_many_accidental_mismatches_block():
+    # 어긋난 음이름이 조표대로 맞은 적이 한 번도 없으면 조표 판독이 틀린 것 — 막는다
+    s = {"beats": 4, "sourceFifths": 1, "systems": [{"system": 0, "srcFifths": 1, "notes": [
+        _n(1, "F4"), _n(1, "B4"), _n(1, "E5"), _n(1, "C5")]}]}
+    r = merge(s, {"dur": [[["1", "1", "1", "1"]]], "pitch": [[["F4", "Bb4", "Eb5", "C5"]]],
+                  "key": [[1]]})
+    assert r["accDiff"] == 3 and any("임시표" in x for x in s["systems"][0]["review"])
 
 
 def test_undercounted_key_is_fixed():
@@ -161,7 +172,8 @@ def test_undercounted_key_is_fixed():
 
 
 if __name__ == "__main__":
-    test_accidental_mismatch_blocks(); test_undercounted_key_is_fixed(); print("ok pitch")
+    test_accidental_mismatch_takes_homr(); test_many_accidental_mismatches_block()
+    test_undercounted_key_is_fixed(); print("ok pitch")
 
 
 def test_agreed_short_first_measure_is_pickup():

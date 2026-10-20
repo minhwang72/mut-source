@@ -56,3 +56,22 @@ assert len(keep) == 2 and not rep2.get("lightRescue"), "멀쩡한 결과를 바�
 assert ink2 is ink0, "안 바꿔도 되는데 잉크 마스크를 갈아치웠다"
 
 print("ok")
+
+
+def test_missing_line_is_completed():
+    """4줄만 잡힌 단: 가운데가 빠지면 사이에, 윗줄이 흐리면 위에 채운다."""
+    ink = np.zeros((200, 300), dtype=bool)
+    for y in (20, 30, 50, 60):                   # 40 이 빠졌다
+        ink[y, 10:290] = True
+    st = cv.find_staves(ink)
+    assert len(st) == 1 and st[0].lines == [20, 30, 40, 50, 60]
+    ink = np.zeros((200, 300), dtype=bool)
+    ink[100, 10:100] = True                      # 흐린 윗줄 — 30% 만 남았다
+    for y in (110, 120, 130, 140):
+        ink[y, 10:290] = True
+    st = cv.find_staves(ink)
+    assert st[0].lines == [100, 110, 120, 130, 140]
+
+
+test_missing_line_is_completed()
+print("ok complete")

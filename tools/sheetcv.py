@@ -234,12 +234,51 @@ def find_staves(ink: np.ndarray, min_fill: float = 0.5) -> list[Staff]:
     for idx, g in enumerate([grp for grp in groups if len(grp) >= 4]):
         lines = [centers[i] for i in g]
         spans = [runs[i] for i in g]
+        lines, spans = _complete_lines(lines, spans, ink)
         top, bottom = lines[0], lines[-1]
         band = ink[top : bottom + 1]
         cols = np.where(band.any(axis=0))[0]
         left, right = (int(cols[0]), int(cols[-1])) if cols.size else (0, w - 1)
         staves.append(Staff(idx, top, bottom, lines, spans, left, right))
     return staves
+
+
+def _complete_lines(lines: list[int], spans: list, ink: np.ndarray):
+    """
+    **4줄만 잡힌 단에 빠진 오선 하나를 채운다.**
+
+    흐리거나 글자에 덮인 오선 한 줄은 행 채움 50% 를 못 넘는다(실측 105장 중
+    25장, 단 50여 개). 음높이는 맨 윗줄에서 세므로 윗줄이 빠지면 단 전체가
+    두 음 밀리고, 가운데 줄이 빠져도 오선 지우기·높이 대조가 그 단을 건너뛴다.
+      · 간격 하나가 두 배면 그 사이 — 가운데 줄이 빠졌다
+      · 간격이 고르면 위·아래 한 칸 자리 중 잉크가 더 긴 쪽(15% 이상일 때만)
+    """
+    if len(lines) != 4:
+        return lines, spans
+    gaps = [b - a for a, b in zip(lines, lines[1:])]
+    unit = min(gaps)
+    wide = [i for i, gp in enumerate(gaps) if gp > unit * 1.6]
+    if len(wide) == 1:
+        i = wide[0]
+        y = (lines[i] + lines[i + 1]) // 2
+        return lines[:i + 1] + [y] + lines[i + 1:], spans[:i + 1] + [(y, y)] + spans[i + 1:]
+    if wide:
+        return lines, spans
+    sp = sum(gaps) / 3.0
+    h = ink.shape[0]
+
+    def fill(y: float) -> float:
+        y0, y1 = max(0, int(round(y)) - 1), min(h, int(round(y)) + 2)
+        return float(ink[y0:y1].mean(axis=1).max()) if y1 > y0 else 0.0
+    up, dn = lines[0] - sp, lines[-1] + sp
+    fu, fd = fill(up), fill(dn)
+    if max(fu, fd) < 0.15 or abs(fu - fd) < 0.05:
+        return lines, spans
+    if fu > fd:
+        y = int(round(up))
+        return [y] + lines, [(y, y)] + spans
+    y = int(round(dn))
+    return lines + [y], spans + [(y, y)]
 
 
 def median_spacing(staves: list[Staff]) -> float:

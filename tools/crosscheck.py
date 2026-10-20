@@ -301,9 +301,11 @@ def _alter(n: dict, fifths: int, acc: dict, key: dict) -> int:
     return alt
 
 
-def _compare(checks, fifths: int) -> tuple[int, list[int], list[str]]:
-    """조표 fifths 로 읽었을 때 (맞은 음 수, 임시표가 다른 마디, 자리가 다른 음)."""
+def _compare(checks, fifths: int) -> tuple[int, list, list, set]:
+    """조표 fifths 로 읽었을 때 (맞은 음 수, 임시표가 다른 음, 자리가 다른 음,
+    임시표 없이 맞은 음이름)."""
     agree, acc_bad, pos_bad = 0, [], []
+    plain: set[str] = set()                           # 임시표 없이 맞은 음이름
     key = {"tie": None}
     for mi, got, theirs, _ in checks:
         acc: dict = {}
@@ -317,14 +319,23 @@ def _compare(checks, fifths: int) -> tuple[int, list[int], list[str]]:
                 key["tie"] = tie
                 alts.append(_alter(x, fifths, acc, key))
             base = t[0] + t.lstrip("ABCDEFG#b")
-            hit = [a for x, a in zip(u, alts) if x["pos"] == base]
+            hit = [(x, a) for x, a in zip(u, alts) if x["pos"] == base]
+            want = t.count("#") - t[1:].count("b")
             if not hit:
                 pos_bad.append((mi, f"{u[0]['pos']}/{t}"))
-            elif hit[0] == t.count("#") - t[1:].count("b"):
+            elif hit[0][1] == want:
                 agree += 1
+                if not (hit[0][0].get("natural") or hit[0][0].get("accidental") is not None):
+                    plain.add(base[0])
             else:
-                acc_bad.append(mi)
-    return agree, acc_bad, pos_bad
+                acc_bad.append((mi, f"{base}{hit[0][1]:+d}/{t}", hit[0][0], want))
+    return agree, acc_bad, pos_bad, plain
+
+
+def _fifths_of(group: list[dict], ours: int) -> int:
+    """구간 조표 — 위에서 고쳤으면 고친 값."""
+    f = group[0].get("srcFifths")
+    return ours if f is None else f
 
 
 def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
@@ -343,13 +354,17 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     if not flat:
         return
 
+    plain: set[str] = set()
+
     def run(f):
         agree, pos, bad = 0, [], []
+        plain.clear()
         for sys_, cs in zip(group, checks):
-            a, b, p = _compare(cs, f)
+            a, b, p, pl = _compare(cs, f)
             agree += a
             pos += [(sys_, mi, w) for mi, w in p]
-            bad += [(sys_, mi) for mi in b]
+            bad += [(sys_,) + b_ for b_ in b]
+            plain.update(pl)
         return agree, bad, pos
 
     agree, bad, pos = run(ours)
@@ -366,6 +381,33 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
                     sys_["srcFifths"] = fits[0]
                 stat["keyFixed"] = stat.get("keyFixed", 0) + 1
                 agree, bad = agree2, []
+    # **조표로 안 풀리는 몇 음은 homr 의 임시표를 쓴다.** 우리 검출기는 임시표를
+    # 자주 놓치거나 종류를 틀린다(실측: ♭ 를 ♮ 로 0.92 점). 어긋난 자리를 원본과
+    # 대조한 7곳(day2sb-3 ♯A · now0918-10 ♭D · wish0906-4 ♭E · now0918-5 ♭D ·
+    # camp0814b-02 ♭B 둘)은 전부 homr 가 맞았다. 다만 어긋남이 많으면 조표를
+    # 잘못 읽은 것이라(대조 안 된 마디까지 틀린다) 그때는 막는다.
+    # 같은 음이름이 이 구간에서 임시표 없이 조표대로 맞은 적이 있어야 '그 음만의
+    # 임시표'다. 그 음이름이 전부 어긋나면 조표 문제다(실측 now0918-3: G장조를
+    # C장조로 읽어 F 17개가 전부 F# — 음마다 고치면 대조 못 한 마디의 F 는 틀린다).
+    # 한 마디에 셋 이상, 구간에 다섯 이상 어긋나도 음마다의 일이 아니다(실측
+    # set0802-7: 한 마디 다섯 음이 전부 제자리표 — homr 쪽이 조를 바꿔 읽었다).
+    per_m: dict = {}
+    for b in bad:
+        per_m[(id(b[0]), b[1])] = per_m.get((id(b[0]), b[1]), 0) + 1
+    if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
+            and all(b[3]["pos"][0] in plain for b in bad)):
+        for _, _, _, x, want in bad:
+            x.pop("natural", None)
+            x.pop("accidental", None)
+            if want == 0:
+                x["natural"] = True
+            else:
+                x["accidental"] = want
+            x["homrAcc"] = True
+        agree2, bad2, _ = run(_fifths_of(group, ours))
+        if not bad2:
+            stat["accAdopted"] = stat.get("accAdopted", 0) + len(bad)
+            agree, bad = agree2, []
     stat["pitchAgree"] = stat.get("pitchAgree", 0) + agree
     stat["posDiff"] = stat.get("posDiff", 0) + len(pos)
     stat["accDiff"] = stat.get("accDiff", 0) + len(bad)
@@ -378,7 +420,8 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         if msg not in sys_.setdefault("review", []):
             sys_["review"].append(msg)
     seen = set()
-    for sys_, mi in bad:
+    for sys_, mi, w, _, _ in bad:
+        stat.setdefault("accDetail", []).append(f"{sys_.get('system')}:{mi} {w}")
         if (id(sys_), mi) in seen:
             continue
         seen.add((id(sys_), mi))
