@@ -240,7 +240,63 @@ def find_staves(ink: np.ndarray, min_fill: float = 0.5) -> list[Staff]:
         cols = np.where(band.any(axis=0))[0]
         left, right = (int(cols[0]), int(cols[-1])) if cols.size else (0, w - 1)
         staves.append(Staff(idx, top, bottom, lines, spans, left, right))
+    short = _short_staves(ink, staves)
+    if short:
+        staves = sorted(staves + short, key=lambda st: st.top)
+        for i, st in enumerate(staves):
+            st.index = i
     return staves
+
+
+# 짧은 단으로 볼 최소 길이(쪽 폭 대비) — 마지막 줄의 두 마디짜리 간주가 쪽의 1/3
+SHORT_STAFF = 0.15
+
+
+def _short_staves(ink: np.ndarray, found: list) -> list:
+    """
+    **쪽 폭의 절반이 안 되는 짧은 단을 찾는다.**
+
+    행 채움 50% 로 오선을 찾으면 끝 줄의 짧은 단(간주 두 마디 등)은 통째로
+    빠진다 — 실측 day2conti-4: 'Interlude 3' 단(쪽의 1/3)이 없는 채로 통과했다.
+    길게 이어진 가로 런만 남겨(글자·음표는 짧다) 같은 간격 다섯 줄을 찾는다.
+    간격은 이미 찾은 단과 같아야 한다 — 다른 크기의 줄(표·밑줄)을 받지 않게.
+    """
+    if not found:
+        return []
+    sp = float(np.median([s.spacing for s in found if s.spacing > 0]))
+    h, w = ink.shape
+    lr = keep_long_runs(ink, max(8, int(w * SHORT_STAFF)))
+    rows = np.nonzero(lr.sum(axis=1) >= w * SHORT_STAFF)[0]
+    taken = [(s.top - sp, s.bottom + sp) for s in found]
+    left0 = float(np.median([s.left for s in found]))
+    groups: list[list[int]] = []
+    for y in rows:
+        y = int(y)
+        if any(a <= y <= b for a, b in taken):
+            continue
+        if groups and y - groups[-1][-1] <= 1:
+            groups[-1].append(y)
+        else:
+            groups.append([y])
+    centers = [(g[0] + g[-1]) // 2 for g in groups]
+    spans_of = {(g[0] + g[-1]) // 2: (g[0], g[-1]) for g in groups}
+    out = []
+    i = 0
+    while i + 4 < len(centers):
+        five = centers[i:i + 5]
+        gaps = [b - a for a, b in zip(five, five[1:])]
+        band = lr[five[0]:five[-1] + 1]
+        cols = np.where(band.any(axis=0))[0]
+        # 짧은 단도 왼쪽 여백에서 시작한다 — 귀퉁이 스티커 속 악보 조각은 받지
+        # 않는다(실측 camp0814b-02 오른쪽 아래 기울어진 조각)
+        if (all(abs(gp - sp) <= sp * 0.25 for gp in gaps) and cols.size
+                and abs(int(cols[0]) - left0) <= sp * 4):
+            out.append(Staff(0, five[0], five[-1], five, [spans_of[c] for c in five],
+                             int(cols[0]), int(cols[-1])))
+            i += 5
+        else:
+            i += 1
+    return out
 
 
 def _complete_lines(lines: list[int], spans: list, ink: np.ndarray):

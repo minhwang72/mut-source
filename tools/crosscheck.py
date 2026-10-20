@@ -187,9 +187,12 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
     # 그 답을 쓰고 표시를 지운다. 찍지 않은 음표에서도 다르면 아래에서 막는다.
     if ok_o and ok_t and len(ours) == len(theirs):
         diff = [i for i, (x, y) in enumerate(zip(ours, theirs)) if x != y]
-        if diff and all(units[i][0].get("guessed")
-                        and ours[i].startswith("r") == theirs[i].startswith("r")
-                        for i in diff):
+        covered = {i for i in diff if units[i][0].get("guessed")
+                   and ours[i].startswith("r") == theirs[i].startswith("r")}
+        for i in diff:
+            if i not in covered and _dot_pair(units, ours, theirs, i):
+                covered |= {i, i + 1}
+        if diff and set(diff) <= covered:
             for i in diff:
                 d = _dur(theirs[i])
                 if d is None:
@@ -215,6 +218,25 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
     else:
         stat["ours"] += 1
     return mine
+
+
+# 붙임점 흔적 — 이 점수 이상이면 '점을 봤는데 문턱에 못 미쳤다'
+DOT_HINT = 0.05
+
+
+def _dot_pair(units, ours, theirs, i) -> bool:
+    """
+    **붙임점 하나 차이.** 우리 '8 8' 이 homr '8. 16' 인 자리(합은 같다). 점이
+    흐려 문턱을 못 넘은 경우다 — 그 머리 옆에 점 흔적(dotScore)이 있을 때만
+    homr 를 따른다(실측 camp0814b-04 0.47·0.12, day2conti-4 0.38 — 점 없는 머리는 0).
+    """
+    if i + 1 >= len(ours) or any(t.startswith("r") for t in
+                                 (ours[i], ours[i + 1], theirs[i], theirs[i + 1])):
+        return False
+    a, b = float(ours[i]), float(ours[i + 1])
+    return (abs(float(theirs[i]) - a * 1.5) < 1e-6
+            and abs(float(theirs[i + 1]) - b / 2) < 1e-6
+            and float(units[i][0].get("dotScore") or 0.0) >= DOT_HINT)
 
 
 # 짝지을 만큼 비슷한가 — 음가 토큰 순서가 이 비율 이상 겹쳐야 한다(엉뚱한 마디와

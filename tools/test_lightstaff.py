@@ -73,5 +73,18 @@ def test_missing_line_is_completed():
     assert st[0].lines == [100, 110, 120, 130, 140]
 
 
+
+def test_short_last_staff_is_found():
+    """끝 줄의 짧은 단(쪽의 1/3)도 단이다 — 귀퉁이의 악보 조각은 아니다."""
+    ink = np.zeros((400, 600), dtype=bool)
+    for top, x0, x1 in ((20, 20, 580), (120, 20, 580), (220, 20, 220), (320, 400, 590)):
+        for i in range(5):
+            ink[top + i * 10, x0:x1] = True
+    st = cv.find_staves(ink)
+    assert [s.top for s in st] == [20, 120, 220], [s.top for s in st]
+    assert [s.index for s in st] == [0, 1, 2]
+
+
 test_missing_line_is_completed()
+test_short_last_staff_is_found()
 print("ok complete")

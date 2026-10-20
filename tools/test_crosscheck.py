@@ -193,3 +193,21 @@ def test_agreed_short_first_measure_is_pickup():
 
 if __name__ == "__main__":
     test_agreed_short_first_measure_is_pickup(); print("ok pickup")
+
+
+def test_faint_dot_pair_follows_homr():
+    def e(**k):
+        return dict({"measure": 1, "duration": "eighth", "dotted": False, "rest": False}, **k)
+    notes = [e(dotScore=0.4), e(), e(), e(), dict(e(), duration="half")]
+    s = {"beats": 4, "systems": [{"system": 0, "notes": notes}]}
+    r = merge(s, [[["0.75", "0.25", "0.5", "0.5", "2"]]])
+    assert r.get("resolved") == 1 and notes[0]["dotted"] and notes[1]["duration"] == "16th"
+    # 점 흔적이 없으면 막는다
+    notes = [e(), e(), e(), e(), dict(e(), duration="half")]
+    s = {"beats": 4, "systems": [{"system": 0, "notes": notes}]}
+    r = merge(s, [[["0.75", "0.25", "0.5", "0.5", "2"]]])
+    assert r["conflict"] == 1 and not notes[0]["dotted"]
+
+
+if __name__ == "__main__":
+    test_faint_dot_pair_follows_homr(); print("ok dot")
