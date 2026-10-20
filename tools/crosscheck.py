@@ -211,7 +211,7 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
     # 찍었다는 건 우리 판독이 박을 못 맞춰 후보 중 하나를 골랐다는 뜻이다. 105장에서
     # 이런 마디 66개 중 원본과 대조한 6곳(놓친 8분쉼표·점4분쉼표·흐린 붙임점) 전부
     # homr 가 맞았다. 머리 수가 다르면 짝지을 수 없어 아래에서 막는다.
-    if ok_o and ok_t and any(u[0].get("guessed") for u in units):
+    if ok_o and ok_t and any(n.get(k) for n in mine for k in UNSURE):
         got = _adopt(units, theirs, mi)
         if got is not None:
             for n in got:
@@ -230,6 +230,12 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
         stat["ours"] += 1
     return mine
 
+
+# 우리 판독이 스스로 고친(=확신 못 한) 표시 — 찍기·박 맞추기·되살린 머리·쉼표,
+# 붙임점·속 빈 머리 승격/강등. 이런 마디는 homr 와 다르면 homr 쪽이 맞았다
+# (실측: set0802-3 dotDemoted 0.79 · now0918-9 restPromoted · wish0823-2 fitted).
+UNSURE = ("guessed", "fitted", "restPromoted", "headPromoted", "dotDemoted",
+          "dotPromoted", "hollowPromoted", "hollowDemoted", "repeatFixed")
 
 # 붙임점 흔적 — 이 점수 이상이면 '점을 봤는데 문턱에 못 미쳤다'
 DOT_HINT = 0.05
