@@ -1,0 +1,10 @@
+{
+  "name": "mut-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "뮤트(MuT) 키 변환 코어 — 의존성 0, 브라우저에서 실행 가능",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts web/*.test.mjs"
+  }
+}

@@ -1,0 +1,62 @@
+<header class="bar">
+  <h1 class="brand">mut<span class="dot">.</span></h1>
+  <span class="brand-sub">콘티 키 변환</span>
+</header>
+
+<main>
+  <section class="screen">
+
+    <div class="song a-song">
+      <div class="song-title">
+        <h2 id="song-name">샘플 악보</h2>
+        <p class="muted" id="song-sub"></p>
+      </div>
+      <div class="song-key">
+        <span class="key-from" id="k-from">Bb</span>
+        <span class="key-arrow">→</span>
+        <span class="key-to" id="k-to">G</span>
+        <span class="key-delta" id="k-delta"></span>
+      </div>
+    </div>
+
+    <div class="card a-keys">
+      <h2>키</h2>
+      <div id="chips" class="chips"></div>
+    </div>
+
+    <div class="card a-prog">
+      <div class="card-head">
+        <h2>코드 진행</h2>
+        <button id="copy" class="link">복사</button>
+      </div>
+      <div id="prog" class="prog"></div>
+    </div>
+
+    <div class="toggle-row">
+      <div class="toggle">
+        <button id="t-orig" class="tg">원본</button>
+        <button id="t-new" class="tg on">변환</button>
+      </div>
+    </div>
+
+    <div class="sheet-wrap a-sheet">
+      <span class="badge" id="key-badge"></span>
+      <canvas id="out"></canvas>
+    </div>
+
+    <div class="alert info a-status" id="status"></div>
+
+    <div class="row col a-export">
+      <button id="dl-pdf" class="btn primary">PDF 내려받기</button>
+      <button id="dl-png" class="btn outline">PNG 내려받기</button>
+    </div>
+
+    <p class="fineprint a-note" id="demo-note"></p>
+
+  </section>
+</main>
+
+<footer class="foot">
+  <strong>mut<span class="dot">.</span></strong>
+  <span class="muted">개인 연습용 · 재배포 금지</span>
+</footer>

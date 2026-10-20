@@ -1,0 +1,66 @@
+# ── 비밀 ──────────────────────────────────────────────
+.env
+
+# ── 저작권: 상업 악보는 어떤 형태로도 저장소에 넣지 않는다 ──
+# 악보샘플/ 은 실측 전용이고 재배포 방어의 전제다. dist·out·web/sample 에도
+# 실제 악보가 들어가므로 같이 막는다.
+악보샘플/
+web/sample/
+dist/
+out/
+web/_preview.html
+web/_test.musicxml
+web/_vtest.html
+web/_canvastest.html
+
+# ── 학습 산출물 (용량이 크고 재생성 가능) ──────────────
+data/
+runs/
+datasets/
+live/results.csv
+mark/
+
+# 배포에 필요한 가중치만 올린다 (Dockerfile 이 쓰는 것)
+models/*
+!models/classes.txt
+!models/omr.pt
+!models/omr_tie.pt
+
+# ── 잡동사니 ──────────────────────────────────────────
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+._*
+
+# 디버그 렌더도 실제 악보 크롭이다 — 이미지는 원칙적으로 올리지 않는다
+# (실측: eval/marks_sample.png 등 5개가 상업 악보 크롭이었다)
+*.png
+*.jpg
+*.jpeg
+*.pdf
+yolo11n.pt
+web/_clefcheck.svg
+web/_fav.svg
+
+# 로컬 측정용 가상환경 — 저장소에 넣지 않는다
+.venv/
+
+# 실제 악보에서 뽑은 구조 — 측정용이라 저장소에 넣지 않는다
+eval/structs/
+
+# 브랜드 로고는 악보가 아니다 — *.png 차단(상업 악보 유출 방지)에서만 뺀다
+!web/naver-n.png
+
+# LLM 응답 캐시 — 악보 내용이 들어있다
+eval/aicache/
+
+# 105장 측정 결과 — 상업 악보에서 뽑은 구조라 올리지 않는다
+eval/structs_ai/
+eval/sweep.json
+eval/sweep.log
+eval/sweep.err
+eval/sweep*.json
+eval/sweep*_structs/
+eval/sweep*.log
+eval/sweep*.err

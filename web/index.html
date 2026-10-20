@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover: 앱으로 감쌌을 때 노치 뒤까지 배경이 차게 한다.
+     안전영역은 CSS 의 env(safe-area-inset-*) 로 따로 비운다. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>mut — 악보 키 변환</title>
+<meta name="description" content="악보 키 변환. 단선율 악보를 원하는 키로 다시 그립니다. 변환은 브라우저에서만 일어나고 이미지는 저장하지 않습니다.">
+<meta name="theme-color" content="#fbfbf9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111110" media="(prefers-color-scheme: dark)">
+<meta name="robots" content="noindex">
+<!-- 서체는 둘 다 vendor/ 에서 직접 서빙한다 (verovio 와 같은 방식).
+     외부가 죽어도 화면 인상이 바뀌지 않는다. 바깥으로 나가는 요청이 없다. -->
+<link rel="preload" href="vendor/manrope-latin-var.woff2" as="font"
+      type="font/woff2" crossorigin>
+<!-- 화면 문구에 쓰는 글자만 담은 150KB 쪽만 미리 받는다. 나머지 음절
+     (1.6MB)은 사용자 이름에 그 글자가 나올 때만 브라우저가 가져간다. -->
+<link rel="preload" href="vendor/pretendard-ui.woff2" as="font"
+      type="font/woff2" crossorigin>
+<!-- 파비콘도 같은 글리프. 16px 에서 오선은 뭉개지므로 8분음표 하나만. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23141414%22%2F%3E%3Csvg%20x%3D%2210.4%22%20y%3D%225%22%20width%3D%2211.2%22%20height%3D%2222%22%20viewBox%3D%22-10%20-888%20522%201023%22%3E%3Cg%20transform%3D%22scale%281%2C-1%29%22%3E%3Cpath%20d%3D%22M309%20861c16%20-73%2051%20-137%2094%20-197c54%20-76%2096%20-166%2099%20-263v-7c0%20-50%20-18%20-118%20-21%20-126c-6%20-11%20-11%20-16%20-18%20-16c-1%200%20-5%200%20-6%201c-6%203%20-14%2011%20-14%2022c0%204%201%208%203%2012c15%2034%2020%2071%2020%20106c0%2046%20-10%2088%20-20%20115c-39%20108%20-105%20134%20-144%20142v-605c0%20-87%20-112%20-170%20-203%20-170%20c-56%200%20-99%2032%20-99%2085c0%2088%2090%20171%20203%20171c29%200%2054%20-8%2072%20-24v762c0%209%203%209%209%209h6c8%200%2016%20-2%2019%20-17z%22%20fill%3D%22%23fbfbf9%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="vendor/pretendard.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- **첫 화면이 두 번 그려지지 않게 한다.** 계정·서버 상태가 오기 전에
+     화면을 먼저 그리면 크레딧·아바타·잠금이 뒤늦게 끼어들어 레이아웃이
+     튄다(로그아웃 → 로그인 직후가 특히 그렇다). 알 때까지 덮어 둔다.
+     요청이 늦거나 실패해도 app.js 가 반드시 걷는다 — 안전장치로 타이머도
+     건다. JS 가 아예 안 돌면 이 덮개는 CSS 로 숨는다(noscript 참고). -->
+<div id="boot" class="boot" aria-hidden="true">
+  <svg class="boot-mark"><use href="#i-clef"/></svg>
+</div>
+<noscript><style>.boot{display:none}</style></noscript>
+
+<!-- 높은음자리표 한 벌. 화면 곳곳에서 <use> 로 불러 쓴다. -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <!-- verovio(=앱이 악보를 그릴 때 쓰는 그 엔진)에서 뽑은 SMuFL G음자리표.
+       손으로 그린 path 는 형태가 무너진다. 폰트 단위는 y 가 위로 자라므로
+       scale(1,-1) 로 뒤집고, 글리프 경계 상자를 그대로 viewBox 로 쓴다. -->
+  <!-- 카카오 말풍선 · 네이버 N. 각 사 가이드의 심벌 모양을 따른다.
+       정본은 개발자 사이트가 배포하는 버튼 이미지다. -->
+  <!-- 카카오 공식 심벌. kakao_login_light.svg 의 path 를 그대로 쓴다 —
+       모양을 직접 그리면 상표를 비슷하게 흉내 낸 것이 된다.
+       viewBox 는 원본 48x48 좌표계 그대로다. -->
+  <symbol id="i-kakao" viewBox="0 0 48 48">
+    <path d="M24.0014 14C17.9241 14 13 18.0219 13 22.9825C13 26.1711 15.0368 28.9728 18.1057 30.5656L17.0681 34.5677C17.0295 34.6871 17.0598 34.8151 17.1424 34.9033C17.2029 34.9659 17.2855 35 17.3653 35C17.4341 35 17.5029 34.9772 17.5607 34.9289L22.0196 31.8171C22.661 31.911 23.3215 31.9622 23.9986 31.9622C30.0732 31.9622 35 27.9403 35 22.9797C35 18.0191 30.0759 14 24.0014 14Z" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-clef" viewBox="-13 -1095 671 1762">
+    <g transform="scale(1,-1)"><path d="M441 -245c-23 -4 -48 -6 -76 -6c-59 0 -102 7 -130 20c-88 42 -150 93 -187 154c-26 44 -43 103 -48 176c0 6 -1 13 -1 19c0 54 15 111 45 170c29 57 65 106 110 148s96 85 153 127c-3 16 -8 46 -13 92c-4 43 -5 73 -5 89c0 117 16 172 69 257c34 54 64 82 89 82 c21 0 43 -30 69 -92s39 -115 41 -159v-15c0 -109 -21 -162 -67 -241c-13 -20 -63 -90 -98 -118c-13 -9 -25 -19 -37 -29l31 -181c8 1 18 2 28 2c58 0 102 -12 133 -35c59 -43 92 -104 98 -184c1 -7 1 -15 1 -22c0 -123 -87 -209 -181 -248c8 -57 17 -110 25 -162 c5 -31 6 -58 6 -80c0 -30 -5 -53 -14 -70c-35 -64 -88 -99 -158 -103c-5 0 -11 -1 -16 -1c-37 0 -72 10 -108 27c-50 24 -77 59 -80 105v11c0 29 7 55 20 76c18 28 45 42 79 44h6c49 0 93 -42 97 -87v-9c0 -51 -34 -86 -105 -106c17 -24 51 -36 102 -36c62 0 116 43 140 85 c9 16 13 41 13 74c0 20 -1 42 -5 67c-8 53 -18 106 -26 159zM461 939c-95 0 -135 -175 -135 -286c0 -24 2 -48 5 -71c50 39 92 82 127 128c40 53 60 100 60 140v8c-4 53 -22 81 -55 81h-2zM406 119l54 -326c73 25 110 78 110 161c0 7 0 15 -1 23c-7 95 -57 142 -151 142h-12 zM382 117c-72 -2 -128 -47 -128 -120v-7c2 -46 43 -99 75 -115c-3 -2 -7 -5 -10 -10c-70 33 -116 88 -123 172v11c0 68 44 126 88 159c23 17 49 29 78 36l-29 170c-21 -13 -52 -37 -92 -73c-50 -44 -86 -84 -109 -119c-45 -69 -67 -130 -67 -182v-13c5 -68 35 -127 93 -176 s125 -73 203 -73c25 0 50 3 75 9c-19 111 -36 221 -54 331z"/></g>
+  </symbol>
+  <!-- 8분음표도 같은 출처(Leipzig E1D7). 비율 1:1.96 -->
+  <symbol id="i-note" viewBox="-10 -888 522 1023">
+    <g transform="scale(1,-1)"><path d="M309 861c16 -73 51 -137 94 -197c54 -76 96 -166 99 -263v-7c0 -50 -18 -118 -21 -126c-6 -11 -11 -16 -18 -16c-1 0 -5 0 -6 1c-6 3 -14 11 -14 22c0 4 1 8 3 12c15 34 20 71 20 106c0 46 -10 88 -20 115c-39 108 -105 134 -144 142v-605c0 -87 -112 -170 -203 -170 c-56 0 -99 32 -99 85c0 88 90 171 203 171c29 0 54 -8 72 -24v762c0 9 3 9 9 9h6c8 0 16 -2 19 -17z"/></g>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <button id="back" class="icon-btn" hidden aria-label="뒤로">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <a class="brand" href="./" aria-label="mut 홈">
+    <svg class="brand-clef" aria-hidden="true"><use href="#i-clef"/></svg>
+    <span class="brand-name">mut</span>
+  </a>
+  <span class="brand-sub">악보 키 변환</span>
+  <div class="bar-end">
+    <span class="mode" id="service-mode">연결 중…</span>
+    <button class="credits" id="balance" data-go="account" aria-label="계정과 크레딧"></button>
+    <button class="avatar" id="who" data-go="account" aria-label="계정">
+    <img id="who-photo" alt="" hidden>
+    <svg class="avatar-note" aria-hidden="true"><use href="#i-note"/></svg>
+  </button>
+  </div>
+</header>
+
+<main>
+
+<!-- ───────────── 1. 업로드 ───────────── -->
+<section id="s-upload" class="screen">
+
+  <div class="hero">
+    <svg class="hero-clef" aria-hidden="true"><use href="#i-clef"/></svg>
+    <h1 class="hero-title">악보 한 장을<br><em>원하는 키</em>로</h1>
+    <p class="hero-sub">
+      사진을 올리면 음표·코드·가사를 읽어 새 키로 다시 그립니다.
+      가사는 원본 그대로 두고, 임시표는 새 조성에 맞춰 다시 계산합니다.
+    </p>
+  </div>
+
+  <!-- 로그인이 필요한 상태면 업로드 대신 이걸 보여 준다 -->
+  <div id="locked" class="drop locked" hidden>
+    <svg class="drop-note" aria-hidden="true"><use href="#i-note"/></svg>
+    <h2>로그인하고 시작하세요</h2>
+    <p class="muted">
+      악보 한 장을 읽는 데 1크레딧이 듭니다.<br>
+      처음 오시면 체험 크레딧을 드립니다.
+    </p>
+    <div class="sso">
+      <button class="btn primary" data-go="login">로그인</button>
+    </div>
+    <p class="fineprint">
+      계정이 없으신가요? <a href="/signup" data-go="signup">회원가입</a>
+    </p>
+  </div>
+
+  <label id="drop" class="drop" for="file">
+    <span class="drop-staff" aria-hidden="true"></span>
+    <svg class="drop-note" aria-hidden="true"><use href="#i-note"/></svg>
+    <h2>악보 이미지를 올려주세요</h2>
+    <p class="muted">사진, 스크린샷, 스캔 모두 가능합니다</p>
+    <span class="row">
+      <span class="btn primary">파일 선택</span>
+      <span class="btn outline" id="camera-hint">사진 촬영</span>
+    </span>
+  </label>
+  <input id="file" type="file" accept="image/*" hidden>
+  <input id="file-cam" type="file" accept="image/*" capture="environment" hidden>
+
+  <!-- 첫 판독은 **무조건 자동으로** 한다. 미리 알려주면 검출기가 맞았는지
+       틀렸는지 확인할 길이 없고, 고칠 것도 안 보인다. 수정은 판독 뒤
+       "원본 정보 확인 후 다시 검사"에서 한다.
+       아래 두 칸은 그 재검사가 값을 실어 보내는 그릇이라 화면에서만 숨긴다. -->
+  <select id="source-key" hidden><option value="">자동 판독</option></select>
+  <select id="source-time" hidden><option value="">자동 판독</option><option>4/4</option><option>3/4</option><option>2/4</option><option>6/8</option><option>9/8</option><option>12/8</option></select>
+
+  <!-- 세 단계는 진짜 순서다. 그래서 마디 번호처럼 오선 위에 얹는다. -->
+  <ol class="steps">
+    <li><span class="bar-no">1</span><b>올리기</b>악보 사진을 올립니다</li>
+    <li><span class="bar-no">2</span><b>고르기</b>바꿀 키를 고릅니다</li>
+    <li><span class="bar-no">3</span><b>받기</b>PDF·PNG 로 내려받습니다</li>
+  </ol>
+
+  <section class="plan" aria-labelledby="plan-h">
+    <h2 id="plan-h">요금</h2>
+    <p class="plan-lede"><b>악보 한 장을 읽는 데 1크레딧.</b> 읽고 나면 그 악보로 하는 일은 전부 포함입니다.</p>
+    <dl class="plan-rows">
+      <div><dt>판독</dt><dd><b>1크레딧</b><span>올린 악보 한 장을 읽습니다</span></dd></div>
+      <div><dt>포함</dt><dd><b>키 변경 · 미리보기 · PDF·PNG 저장</b><span>횟수 제한 없이</span></dd></div>
+      <div><dt>같은 악보</dt><dd><b>추가 차감 없음</b><span>같은 이미지를 다시 올려도 읽은 결과를 재사용합니다</span></dd></div>
+      <div><dt>못 읽으면</dt><dd><b>차감 없음</b><span>실패하거나 검사를 통과 못 하면 크레딧을 돌려드립니다</span></dd></div>
+      <div><dt>지어낸 자리</dt><dd><b>있으면 차감 안 함</b><span>박자를 맞추려 음가를 지어낸 곳이 하나라도 있으면 "확인 필요"로 두고 크레딧을 차감하지 않습니다</span></dd></div>
+    </dl>
+    <!-- **상품과 가격은 로그인 없이 보여야 한다.** 전자상거래법상 표시
+         의무이기도 하고, PG 심사도 "팔 수 있는 상품이 하나 이상 보이는가"
+         를 본다. 계정 화면과 같은 목록을 여기에도 그린다. -->
+    <div class="packs" id="packs-public"></div>
+
+    <p class="plan-note">
+      비용은 저장이 아니라 <b>판독</b>에서 발생하므로 과금도 그 시점에 합니다.
+      결제는 준비 중이며, 열리는 대로 위 이용권을 구매하실 수 있습니다.
+    </p>
+  </section>
+
+  <ul class="notes">
+    <li>멜로디 한 줄짜리 악보를 지원합니다 — 합창·2부 악보는 아직 읽지 못합니다</li>
+    <li id="privacy-note">이미지는 로컬 메모리에서 처리 후 해제되며 저장하지 않습니다</li>
+    <li>체험 크레딧은 브라우저와 접속 주소 양쪽으로 셉니다</li>
+    <li>체험 잔액과 결과는 임시 보관됩니다</li>
+  </ul>
+</section>
+
+<!-- ───────────── 2. 판독 중 ───────────── -->
+<section id="s-loading" class="screen" hidden>
+  <div class="center-col">
+    <div class="spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <h2 id="load-title">악보를 읽고 있어요</h2>
+    <p class="muted" id="load-step">오선을 찾는 중…</p>
+    <progress id="job-progress" max="100" value="0" aria-label="악보 처리 진행률"></progress>
+  </div>
+</section>
+
+<!-- ───────────── 3. 키 선택 ───────────── -->
+<section id="s-key" class="screen" hidden>
+  <div class="sheet-wrap">
+    <span class="badge" id="orig-badge">원본</span>
+    <img id="orig-img" alt="원본 악보">
+  </div>
+
+  <div id="quality" class="alert" hidden></div>
+
+  <div class="card">
+    <h2 class="card-title">원본 조성</h2>
+    <select id="key-from" class="select hero" aria-label="원본 조성"></select>
+    <p class="muted" id="key-guess"></p>
+    <p id="key-hint" hidden></p>
+    <div class="recheck">
+      <label>원본 박자 <select id="review-time" class="select"><option value="">미확인</option><option>4/4</option><option>3/4</option><option>2/4</option><option>6/8</option><option>9/8</option><option>12/8</option></select></label>
+      <button id="recheck" class="btn outline sm">확인 후 다시 검사</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 class="card-title">어떤 키로 바꿀까요?</h2>
+      <select id="key-direct" class="select" aria-label="목표 키 직접 선택"></select>
+    </div>
+    <div id="chips" class="chips"></div>
+  </div>
+
+  <button id="go" class="btn primary go">변환하기</button>
+</section>
+
+<!-- ───────────── 4. 코드 확인 ───────────── -->
+<section id="s-confirm" class="screen" hidden>
+  <h2 class="card-title">이 코드가 맞나요?</h2>
+  <p class="muted" id="confirm-sub"></p>
+  <div class="progress"><div id="confirm-bar"></div></div>
+
+  <div class="card confirm-card">
+    <div class="crop-wrap">
+      <canvas id="crop"></canvas>
+      <span class="badge sm" id="conf-badge"></span>
+    </div>
+    <!-- 읽은 코드를 크게 보여준다. 맞는 경우가 대부분이라 여기서 끝난다. -->
+    <div id="conf-read" class="chord-read"></div>
+  </div>
+
+  <!-- ① 먼저 맞는지만 묻는다 -->
+  <div class="row" id="conf-ask">
+    <button id="conf-edit" class="btn outline">수정</button>
+    <button id="conf-ok" class="btn primary">맞음</button>
+  </div>
+
+  <!-- ② 수정할 때만 조각 버튼을 보여준다 -->
+  <div id="conf-editor" hidden>
+    <label class="label">근음</label>
+    <div id="ed-root" class="chips"></div>
+    <label class="label">임시표</label>
+    <div id="ed-acc" class="chips"></div>
+    <label class="label">성질</label>
+    <div id="ed-qual" class="chips"></div>
+    <label class="label">베이스 (분수코드)</label>
+    <div id="ed-bass" class="chips"></div>
+    <div class="chord-preview">
+      <span class="muted">고친 코드</span>
+      <strong id="ed-preview">—</strong>
+    </div>
+    <div class="row">
+      <button id="ed-none" class="btn outline">코드 아님</button>
+      <button id="ed-save" class="btn primary">저장</button>
+    </div>
+    <button id="ed-typed" class="link">직접 입력</button>
+    <input id="conf-input" class="input big" hidden>
+  </div>
+
+  <div class="row">
+    <button id="conf-skip" class="btn outline sm">건너뛰기</button>
+  </div>
+  <button id="conf-all" class="link">전부 맞다고 하고 넘어가기</button>
+</section>
+
+<!-- ───────────── 5. 결과 ───────────── -->
+<section id="s-result" class="screen" hidden>
+  <h2 class="card-title" id="res-title"></h2>
+  <p class="muted" id="res-sub"></p>
+
+  <div class="toggle-row">
+    <div class="toggle">
+      <button id="t-orig" class="tg">원본</button>
+      <button id="t-new" class="tg on">변환</button>
+    </div>
+  </div>
+  <div class="sheet-wrap">
+    <canvas id="out"></canvas>
+  </div>
+
+  <div class="alert" id="res-warn" hidden></div>
+  <div id="fix-beats"></div>
+  <p id="credit-notice" class="credit-notice" role="status"></p>
+
+  <div class="row col">
+    <button id="dl-pdf" class="btn primary">PDF 다운로드</button>
+    <button id="dl-png" class="btn outline">PNG 다운로드</button>
+    <button id="again" class="link">다른 키로 다시 변환</button>
+  </div>
+
+  <p class="fineprint">개인 연습용 · 재배포 금지</p>
+  <p class="fineprint" id="copyright-line"></p>
+</section>
+
+<!-- ───────────── 계정 (두 번째 화면) ───────────── -->
+<section id="s-login" class="screen narrow" hidden>
+  <div class="gate">
+    <svg class="gate-clef" aria-hidden="true"><use href="#i-clef"/></svg>
+    <h1 class="gate-title">로그인</h1>
+    <p class="muted gate-sub">악보 한 장을 원하는 키로.</p>
+
+    <form id="login" class="login" autocomplete="on">
+      <label class="field">
+        <span class="sr-only">아이디</span>
+        <input id="login-id" class="input" placeholder="아이디"
+               autocomplete="username" autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span class="sr-only">비밀번호</span>
+        <input id="login-pw" class="input" type="password" placeholder="비밀번호"
+               autocomplete="current-password">
+      </label>
+      <button class="btn primary go" type="submit">로그인</button>
+      <p class="fineprint" id="login-msg" role="status"></p>
+    </form>
+
+    <div class="or"><span>또는</span></div>
+
+    <div class="sso">
+      <button class="btn kakao" data-sso="kakao" hidden><svg class="sso-mark" aria-hidden="true"><use href="#i-kakao"/></svg><span>카카오 로그인</span></button>
+      <button class="btn naver" data-sso="naver" hidden><img class="sso-mark" src="/naver-n.png" alt="" width="18" height="18"><span>네이버 로그인</span></button>
+      <p class="fineprint" id="sso-none" hidden>간편 로그인을 준비 중입니다.</p>
+    </div>
+    <p class="fineprint" id="kakao-msg" role="status"></p>
+
+    <p class="gate-swap">
+      계정이 없으신가요? <a href="/signup" data-go="signup">회원가입</a>
+    </p>
+  </div>
+</section>
+
+<section id="s-signup" class="screen narrow" hidden>
+  <div class="gate">
+    <svg class="gate-clef" aria-hidden="true"><use href="#i-clef"/></svg>
+    <h1 class="gate-title">회원가입</h1>
+    <p class="muted gate-sub" id="su-welcome" hidden>
+      처음 오셨네요. 약관에 동의하시면 바로 시작합니다.
+    </p>
+    <p class="muted gate-sub" id="su-intro">체험 크레딧 5개를 드립니다.</p>
+
+    <!-- **간편가입이 먼저다.** 카카오·네이버는 그쪽 동의 화면을 거치고
+         돌아오면 우리 약관 동의만 따로 받는다(needsAgree). 그래서 여기
+         체크박스에 묶을 이유가 없다 — 묶어 두면 "아이디·비밀번호를 다 쓰고
+         카카오를 누르는" 순서로 보인다. -->
+    <div class="sso" id="su-sso">
+      <button class="btn kakao" data-sso="kakao" hidden><svg class="sso-mark" aria-hidden="true"><use href="#i-kakao"/></svg><span>카카오 로그인</span></button>
+      <button class="btn naver" data-sso="naver" hidden><img class="sso-mark" src="/naver-n.png" alt="" width="18" height="18"><span>네이버 로그인</span></button>
+    </div>
+
+    <div class="or" id="su-or"><span>또는 아이디로 가입</span></div>
+
+    <form id="signup" class="login">
+      <label class="field">
+        <span>아이디</span>
+        <input id="su-id" class="input" placeholder="영문 소문자·숫자 4~20자"
+               autocomplete="username" autocapitalize="off" spellcheck="false"
+               maxlength="20">
+      </label>
+      <label class="field">
+        <span>비밀번호</span>
+        <input id="su-pw" class="input" type="password" placeholder="8자 이상"
+               autocomplete="new-password" minlength="8">
+      </label>
+      <label class="field">
+        <span>이메일</span>
+        <input id="su-email" class="input" type="email" placeholder="none@example.com"
+               autocomplete="email" maxlength="254">
+        <em>영수증과 비밀번호 재설정에 씁니다. 광고는 보내지 않습니다.</em>
+      </label>
+
+      <fieldset class="agree">
+        <legend class="sr-only">약관 동의</legend>
+        <label><input type="checkbox" id="ag-all"> <b>전체 동의</b></label>
+        <hr>
+        <label><input type="checkbox" class="ag" id="ag-age">
+          <span>[필수] 만 14세 이상입니다</span></label>
+        <label><input type="checkbox" class="ag" id="ag-tos">
+          <span>[필수] <a href="/terms" data-go="terms">이용약관</a>에 동의합니다</span></label>
+        <label><input type="checkbox" class="ag" id="ag-priv">
+          <span>[필수] <a href="/privacy" data-go="privacy">개인정보처리방침</a>을 확인했습니다</span></label>
+      </fieldset>
+
+      <button class="btn primary go" type="submit" id="su-go">가입하고 시작하기</button>
+      <p class="fineprint" id="su-msg" role="status"></p>
+    </form>
+
+    <p class="gate-swap">
+      이미 계정이 있으신가요? <a href="/login" data-go="login">로그인</a>
+    </p>
+  </div>
+</section>
+
+<section id="s-account" class="screen" hidden>
+  <div class="acct-head">
+    <div class="acct-who">
+      <span class="avatar lg" id="acct-avatar">
+        <img id="acct-photo" alt="" hidden>
+        <svg class="avatar-note" aria-hidden="true"><use href="#i-note"/></svg>
+      </span>
+      <div>
+        <strong id="acct-name">—</strong>
+        <span class="muted" id="acct-mail">—</span>
+      </div>
+    </div>
+    <div class="acct-bal">
+      <span class="muted">보유 크레딧</span>
+      <strong id="acct-credits">—</strong>
+      <span class="muted" id="acct-note"></span>
+    </div>
+    <button id="logout" class="btn outline sm" hidden>로그아웃</button>
+  </div>
+
+  <div class="card" id="c-profile" hidden>
+    <div class="card-head">
+      <h2 class="card-title">내 정보</h2>
+      <span class="muted">결제와 영수증에 쓰입니다</span>
+    </div>
+    <form id="profile" class="prof">
+      <label class="field">
+        <span>영수증 이메일</span>
+        <input id="pf-email" class="input" type="email" inputmode="email"
+               autocomplete="email" maxlength="254" placeholder="none@example.com">
+        <em>결제 영수증과 결제 관련 안내를 이 주소로 보냅니다. 광고는 보내지 않습니다.</em>
+      </label>
+      <label class="field">
+        <span>표시 이름</span>
+        <input id="pf-label" class="input" maxlength="40" placeholder="예: 목요 합주팀">
+        <em>화면에만 쓰는 이름입니다. 비워 두면 카카오 닉네임을 씁니다.</em>
+      </label>
+      <div class="prof-foot">
+        <button class="btn primary sm" type="submit">저장</button>
+        <span class="muted" id="pf-msg" role="status"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 class="card-title">크레딧 충전</h2>
+      <span class="muted">크레딧 1개 = 악보 1장 판독</span>
+    </div>
+    <div class="packs" id="packs"></div>
+    <div class="custom-buy">
+      <label for="buy-n">직접 입력</label>
+      <div class="custom-row">
+        <input id="buy-n" type="number" min="1" max="999" step="1"
+               inputmode="numeric" placeholder="예: 7">
+        <span class="unit">크레딧</span>
+        <output id="buy-won" for="buy-n">—</output>
+        <button class="btn" id="buy-go" disabled>결제하기</button>
+      </div>
+      <p class="hint">낱개로 사면 한 장당 500원입니다. 묶음이 더 쌉니다.</p>
+    </div>
+    <p class="fineprint">
+      결제는 아직 연결되어 있지 않습니다. 위 버튼은 화면 흐름만 보여 줍니다.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">결제 내역</h2>
+    <div id="orders" class="orders"></div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">판독에 크레딧이 쓰이는 방식</h2>
+    <dl class="plan-rows">
+      <div><dt>차감 시점</dt><dd><b>판독할 때</b><span>저장이 아니라 읽을 때 1크레딧</span></dd></div>
+      <div><dt>포함</dt><dd><b>키 변경 · 미리보기 · 저장</b><span>읽은 뒤에는 횟수 제한 없이</span></dd></div>
+      <div><dt>못 읽으면</dt><dd><b>돌려드립니다</b><span>실패하거나 검사를 통과 못 하면 차감하지 않습니다</span></dd></div>
+      <div><dt>지어낸 자리</dt><dd><b>차감 안 함</b><span>음가를 지어낸 곳이 있으면 차감하지 않습니다</span></dd></div>
+    </dl>
+  </div>
+</section>
+
+<!-- ───────────── 자주 묻는 질문 ───────────── -->
+<section id="s-faq" class="screen doc" hidden>
+  <h1 class="doc-title">자주 묻는 질문</h1>
+
+  <h2>어떤 악보를 읽을 수 있나요?</h2>
+  <p>오선 한 줄에 멜로디가 하나 있고 위에 코드가 적힌 <b>단선율 악보</b>를 지원합니다.
+     리드시트·콘티·악보집에서 흔히 쓰는 형태입니다.
+     사진·스크린샷·스캔 모두 됩니다.</p>
+  <p><b>합창·2부 악보(두 성부가 한 오선에 겹친 것)는 지원하지 않습니다.</b>
+     한 기둥에 음표가 여러 개 달리면 박자 계산이 성립하지 않아 마디를 통째로
+     잘못 읽습니다. 올리시면 자동으로 걸러내고 <b>크레딧을 차감하지 않습니다.</b></p>
+  <p>피아노 반주보(대보표)도 아직 정확도가 떨어집니다.</p>
+
+  <h2>손으로 쓴 코드도 읽나요?</h2>
+  <p>읽습니다. 인쇄된 악보 위에 펜으로 덧쓴 코드까지 포함해 판독하도록 만들었습니다.
+     다만 흘려 쓴 글씨는 틀릴 수 있어서, 확신이 낮은 코드는 변환 전에 하나씩 확인을 여쭙니다.</p>
+
+  <h2>크레딧은 언제 차감되나요?</h2>
+  <p><b>악보를 읽을 때</b> 1크레딧입니다. 저장할 때가 아닙니다.
+     비용이 판독에서 발생하기 때문이고, 읽고 난 뒤에는 키를 몇 번을 바꾸든
+     PDF·PNG로 몇 번을 저장하든 추가 차감이 없습니다.</p>
+  <p>같은 이미지를 다시 올리면 읽은 결과를 재사용하므로 또 차감하지 않습니다.</p>
+
+  <h2>음표 길이를 못 읽으면 어떻게 되나요?</h2>
+  <p>두 가지로 갈립니다. 길이를 확실히 읽지 못했지만 <b>마디의 박자가 맞으려면
+     그 길이일 수밖에 없는</b> 경우가 있습니다. 답이 하나뿐이니 지어낸 것이
+     아니라 <b>따져서 알아낸 것</b>입니다 — 그 길이로 채우고 결과를 드립니다.</p>
+  <p>반대로 <b>그 합을 만드는 길이가 여럿</b>이면 그중 하나를 고르는 수밖에
+     없습니다. 그건 지어내는 것입니다. 이럴 때 mut 는 <b>"확인이 필요한 결과"로
+     두고 크레딧을 차감하지 않습니다.</b> 화면은 그대로 보여 드리니 직접
+     고쳐서 쓰실 수 있습니다 — 다만 돈은 받지 않습니다.</p>
+
+  <h2>잘못 읽으면 어떻게 되나요?</h2>
+  <p>판독이 실패하거나 자체 검사를 통과하지 못하면 <b>크레딧을 돌려드립니다.</b>
+     마디마다 음가의 합이 박자표와 맞는지 기계적으로 검산하는데, 이게 맞지 않으면
+     "확인이 필요한 결과"로 표시하고 차감하지 않습니다.</p>
+  <p>검사를 통과했더라도 원본과 100% 같다는 보장은 아닙니다. 최종 확인은 꼭 해주세요.</p>
+
+  <h2>원본 악보는 서버에 저장되나요?</h2>
+  <p>저장하지 않습니다. 업로드한 이미지는 메모리에서만 다루고 판독이 끝나면 버립니다.
+     키 변환과 악보 다시 그리기는 <b>전부 사용자 브라우저 안에서</b> 일어나고,
+     서버는 구조 데이터(음표 위치·음가·코드 문자열)만 돌려줍니다.</p>
+
+  <h2>저작권은 괜찮나요?</h2>
+  <p>본인이 정당하게 구입하거나 사용 권한이 있는 악보를 <b>개인 연습 목적</b>으로
+     키만 바꾸는 용도입니다. 변환한 악보를 공유·배포·판매하지 마세요.</p>
+  <p>그래서 이 서비스에는 갤러리·공유 링크·팀 폴더 같은 기능을 의도적으로 넣지 않았습니다.
+     결과물은 본인 기기로만 내려갑니다.</p>
+
+  <h2>가사와 원본 표기는 어떻게 되나요?</h2>
+  <p>가사는 원본 그대로 옮깁니다. 제목·작곡자·저작권 표기가 있는 머리글은
+     원본 픽셀을 그대로 오려 붙여 보존합니다. 임시표는 새 조성에 맞춰 다시 계산합니다.</p>
+
+  <h2>환불되나요?</h2>
+  <p>사용하지 않은 크레딧은 환불 가능합니다. 자세한 조건은
+     <a href="/terms" data-go="terms">이용약관</a>의 청약철회 조항을 봐주세요.</p>
+</section>
+
+<!-- ───────────── 문의 ───────────── -->
+<section id="s-contact" class="screen doc" hidden>
+  <h1 class="doc-title">문의</h1>
+  <p>판독이 이상하거나, 결제에 문제가 있거나, 원하는 기능이 있으면 메일로 보내주세요.
+     보통 <b>1~2 영업일</b> 안에 답장드립니다.</p>
+
+  <div class="card contact-card">
+    <p class="eyebrow">이메일</p>
+    <a class="contact-mail" id="contact-mail" href="#">—</a>
+    <p class="muted">악보 판독이 이상하다면, <b>어떤 악보의 몇 번째 단·마디</b>가
+       어떻게 틀렸는지 적어주시면 훨씬 빨리 고칠 수 있습니다.</p>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">보내실 때 도움이 되는 것</h2>
+    <ul class="notes">
+      <li>어떤 화면에서 생긴 일인지 (올리기 / 코드 확인 / 결과)</li>
+      <li>브라우저와 기기 (예: 아이폰 사파리, 윈도우 크롬)</li>
+      <li>화면 캡처 — <b>악보 원본 파일은 보내지 마세요.</b> 저작권 때문입니다</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ───────────── 이용약관 ───────────── -->
+<section id="s-terms" class="screen doc" hidden>
+  <h1 class="doc-title">이용약관</h1>
+  <p class="muted" id="terms-date">—</p>
+
+  <h2>제1조 (목적)</h2>
+  <p>이 약관은 <span class="biz-name">—</span>(이하 "회사")가 제공하는 악보 키 변환
+     서비스 mut(이하 "서비스")의 이용 조건과 절차를 정합니다.</p>
+
+  <h2>제2조 (서비스의 내용)</h2>
+  <p>서비스는 이용자가 올린 악보 이미지를 판독하여 지정한 조성으로 다시 그린 악보를
+     제공합니다. 판독은 자동으로 이루어지며 원본과의 완전한 일치를 보장하지 않습니다.</p>
+
+  <h2>제3조 (크레딧)</h2>
+  <p>① 크레딧은 서비스 이용을 위한 선불 수단이며, 악보 1장 판독에 1크레딧이 차감됩니다.</p>
+  <p>② 차감은 <b>판독 시점</b>에 이루어집니다. 판독이 완료된 뒤의 조성 변경, 미리보기,
+     PDF·PNG 저장에는 추가 차감이 없습니다.</p>
+  <p>③ 판독이 실패하거나 회사의 자동 검사를 통과하지 못한 경우 크레딧은 차감되지 않습니다.</p>
+  <p>④ 회사는 판독 결과의 정확성을 보증하지 않습니다. 음표의 길이를 확실히 읽지
+     못했으나 <b>마디의 박자로 그 값이 하나로 특정되는</b> 경우, 회사는 해당
+     값으로 결과를 구성하며 크레딧은 차감됩니다. 이용자는 결과를 원본과 대조할
+     책임이 있습니다.</p>
+  <p>⑤ 같은 합을 만드는 값이 여럿이어서 회사가 그중 하나를 선택한 경우,
+     회사는 해당 결과를 <b>"확인이 필요한 결과"로 표시하고 크레딧을 차감하지
+     않습니다.</b></p>
+  <p>⑥ 크레딧의 유효기간은 구매일로부터 5년입니다.</p>
+
+  <h2>제4조 (청약철회 및 환불)</h2>
+  <p>① 이용자는 크레딧 구매일로부터 <b>7일 이내</b>에 청약을 철회할 수 있습니다.</p>
+  <p>② 다만 「전자상거래 등에서의 소비자보호에 관한 법률」 제17조 제2항에 따라,
+     <b>이미 사용한 크레딧</b>에 대해서는 청약철회가 제한됩니다.
+     사용하지 않은 크레딧은 전액 환불됩니다.</p>
+  <p>③ 7일이 지난 뒤에도 사용하지 않은 크레딧은 환불을 요청할 수 있으며,
+     이 경우 결제 수수료를 제외하고 환급합니다.</p>
+  <p>④ 환불 요청은 <a href="/contact" data-go="contact">문의</a> 이메일로 받습니다.</p>
+
+  <h2>제5조 (이용자의 의무 및 저작권)</h2>
+  <p>① 이용자는 <b>본인이 정당한 권한을 가진 악보</b>만 업로드해야 합니다.</p>
+  <p>② 변환 결과물은 「저작권법」 제30조에 따른 사적 이용 범위에서만 사용해야 하며,
+     공유·배포·판매·공중송신할 수 없습니다.</p>
+  <p>③ 이를 위반하여 발생한 법적 책임은 이용자에게 있습니다.</p>
+
+  <h2>제6조 (이미지의 처리)</h2>
+  <p>회사는 업로드된 악보 이미지를 저장하지 않습니다. 판독에 필요한 동안만 메모리에서
+     처리하고 즉시 폐기합니다. 조성 변환과 악보 렌더링은 이용자의 브라우저에서 수행됩니다.</p>
+
+  <h2>제7조 (책임의 한계)</h2>
+  <p>판독 결과의 오류로 인해 발생한 손해에 대해 회사는 해당 판독에 사용된 크레딧을
+     초과하는 책임을 지지 않습니다. 이용자는 결과물을 사용하기 전에 직접 확인해야 합니다.</p>
+
+  <h2>제8조 (약관의 변경)</h2>
+  <p>회사는 약관을 변경할 수 있으며, 변경 시 서비스 화면에 공지합니다.
+     이용자에게 불리한 변경은 적용일 30일 전에 공지합니다.</p>
+</section>
+
+<!-- ───────────── 오픈소스 고지 ───────────── -->
+<section id="s-oss" class="screen doc" hidden>
+  <h1 class="doc-title">오픈소스 고지</h1>
+  <p class="muted">mut 은 아래 오픈소스를 사용합니다. 각 소프트웨어의 저작권은 해당 저작자에게 있습니다.</p>
+  <table class="doc-table">
+    <thead><tr><th>이름</th><th>라이선스</th><th>쓰는 곳</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/liebharc/homr" rel="noopener" target="_blank">homr</a></td>
+          <td>AGPL-3.0</td><td>악보 교차 판독 — 서버에서 별도 프로그램으로, 수정 없이 실행합니다</td></tr>
+      <tr><td><a href="https://github.com/ultralytics/ultralytics" rel="noopener" target="_blank">Ultralytics</a></td>
+          <td>AGPL-3.0</td><td>음표·기호 검출</td></tr>
+      <tr><td><a href="https://github.com/rism-digital/verovio" rel="noopener" target="_blank">Verovio</a></td>
+          <td>LGPL-3.0</td><td>악보 그리기(브라우저)</td></tr>
+      <tr><td><a href="https://github.com/pytorch/pytorch" rel="noopener" target="_blank">PyTorch</a></td>
+          <td>BSD-3-Clause 등</td><td>검출 모델 실행</td></tr>
+      <tr><td><a href="https://github.com/opencv/opencv" rel="noopener" target="_blank">OpenCV</a></td>
+          <td>Apache-2.0</td><td>이미지 처리</td></tr>
+      <tr><td><a href="https://github.com/orioncactus/pretendard" rel="noopener" target="_blank">Pretendard</a></td>
+          <td>SIL OFL 1.1</td><td>글꼴</td></tr>
+      <tr><td><a href="https://github.com/sharanda/manrope" rel="noopener" target="_blank">Manrope</a></td>
+          <td>SIL OFL 1.1</td><td>글꼴</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────── 개인정보처리방침 ───────────── -->
+<section id="s-privacy" class="screen doc" hidden>
+  <h1 class="doc-title">개인정보처리방침</h1>
+  <p class="muted" id="privacy-date">—</p>
+
+  <h2>1. 수집하는 항목과 목적</h2>
+  <table class="doc-table">
+    <thead><tr><th>구분</th><th>항목</th><th>목적</th><th>보유기간</th></tr></thead>
+    <tbody>
+      <tr><td>로그인</td><td>카카오 계정 식별자, 닉네임·프로필 사진(선택 동의), 회원이 입력한 영수증 이메일·표시 이름</td><td>본인 확인, 크레딧 잔액 관리</td><td>회원 탈퇴 시까지</td></tr>
+      <tr><td>결제</td><td>결제 승인 정보, 금액, 일시</td><td>결제·환불 처리</td><td>5년 (전자상거래법)</td></tr>
+      <tr><td>문의</td><td>이메일 주소, 문의 내용</td><td>문의 응대</td><td>3년 (전자상거래법)</td></tr>
+      <tr><td>접속</td><td>IP 주소</td><td>부정 이용 방지, 체험 한도 관리</td><td>3개월</td></tr>
+    </tbody>
+  </table>
+  <p><b>카드번호 등 결제수단 정보는 회사가 보관하지 않습니다.</b>
+     결제대행사가 처리하며 회사는 승인 결과만 전달받습니다.</p>
+
+  <h2>2. 악보 이미지는 수집하지 않습니다</h2>
+  <p>업로드한 악보 이미지는 <b>저장하지 않습니다.</b> 판독에 필요한 동안만 서버 메모리에서
+     처리하고 즉시 폐기하며, 디스크에 기록하지 않습니다. 조성 변환과 악보 렌더링은
+     이용자의 브라우저에서 수행되므로 변환된 악보는 서버를 거치지 않습니다.</p>
+
+  <h2>3. 제3자 제공 및 처리위탁</h2>
+  <table class="doc-table">
+    <thead><tr><th>수탁자</th><th>위탁 업무</th></tr></thead>
+    <tbody>
+      <tr><td>Anthropic, PBC</td><td>악보 판독 보조 (오선 조각 이미지 처리, 저장하지 않음)</td></tr>
+      <tr><td id="pg-row">결제대행사</td><td>결제 처리 및 환불</td></tr>
+      <tr><td>카카오</td><td>소셜 로그인 인증</td></tr>
+      <tr><td>네이버</td><td>소셜 로그인 인증</td></tr>
+    </tbody>
+  </table>
+  <p>위 목적 외에는 개인정보를 제3자에게 제공하지 않습니다.</p>
+
+  <h2>4. 이용자의 권리</h2>
+  <p>이용자는 언제든지 개인정보의 열람·정정·삭제·처리정지를 요청할 수 있습니다.
+     <a href="/contact" data-go="contact">문의</a> 이메일로 접수하며, 요청일로부터 10일 이내에 조치합니다.</p>
+  <p>회원 탈퇴를 요청하면 법령상 보존 의무가 있는 정보를 제외하고 지체 없이 파기합니다.</p>
+
+  <h2>5. 개인정보 보호책임자</h2>
+  <dl class="biz-list">
+    <div><dt>책임자</dt><dd class="biz-ceo">—</dd></div>
+    <div><dt>연락처</dt><dd class="biz-mail">—</dd></div>
+  </dl>
+
+  <h2>6. 방침의 변경</h2>
+  <p>이 방침이 변경되는 경우 서비스 화면에 공지합니다.</p>
+</section>
+
+</main>
+
+<!-- ───────────── 결제 모달 ───────────── -->
+<div id="pay" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="pay-title">
+    <button class="modal-x" id="pay-close" aria-label="닫기">&times;</button>
+    <h2 id="pay-title">크레딧 충전</h2>
+    <div class="pay-sum">
+      <div><span>상품</span><strong id="pay-name">—</strong></div>
+      <div><span>크레딧</span><strong id="pay-credits">—</strong></div>
+      <div class="pay-total"><span>결제 금액</span><strong id="pay-amount">—</strong></div>
+    </div>
+    <p class="muted pay-note" id="pay-note"></p>
+    <button class="btn primary" id="pay-go">결제하기</button>
+    <p class="fineprint">부가세 포함 · 사용하지 않은 크레딧은 환불 가능합니다</p>
+  </div>
+</div>
+
+<footer class="foot">
+  <div class="foot-row">
+    <a class="foot-brand" href="/" data-go="home">
+      <!-- 파비콘과 같은 표지 — 둥근 사각형 안 높은음자리표 -->
+      <span class="foot-mark" aria-hidden="true"><svg class="brand-clef"><use href="#i-clef"/></svg></span>
+      <strong>mut</strong>
+    </a>
+    <nav class="foot-nav" aria-label="사이트 안내">
+      <a href="/faq" data-go="faq">자주 묻는 질문</a>
+      <a href="/contact" data-go="contact">문의</a>
+      <a href="/terms" data-go="terms">이용약관</a>
+      <a href="/privacy" data-go="privacy"><b>개인정보처리방침</b></a>
+      <a href="/oss" data-go="oss">오픈소스</a>
+    </nav>
+  </div>
+
+  <!-- **전자상거래법 제10조**가 요구하는 항목만. 한 덩이로 흘려 쓴다. -->
+  <div class="foot-biz" id="foot-biz"></div>
+
+  <p class="foot-legal">
+    개인 연습용 · 재배포 금지 · 저작권은 원 저작자에게 있습니다 &nbsp;©&nbsp;모이드
+  </p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

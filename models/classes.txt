@@ -1,0 +1,16 @@
+notehead_filled
+notehead_half
+notehead_whole
+flag_8th
+flag_16th
+accidental_sharp
+accidental_flat
+accidental_natural
+rest_whole
+rest_half
+rest_quarter
+rest_8th
+rest_16th
+clef_g
+timesig
+beam
