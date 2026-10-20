@@ -27,8 +27,8 @@ def available() -> bool:
     return os.environ.get("MUTE_HOMR", "1") != "0" and os.path.exists(HOMR)
 
 
-def read(png: bytes) -> list[list[list[str]]] | None:
-    """원본 이미지 → 단마다 마디마다 음가 토큰 목록(쉼표는 'r' 접두). 실패하면 None."""
+def read(png: bytes) -> dict | None:
+    """원본 이미지 → {"dur": 음가 토큰, "pitch": 음높이} (systems 참고). 실패하면 None."""
     if not available():
         return None
     base = "/dev/shm" if os.path.isdir("/dev/shm") else None
@@ -46,24 +46,29 @@ def read(png: bytes) -> list[list[list[str]]] | None:
         return None
 
 
-def systems(path: str) -> list[list[list[str]]]:
+def systems(path: str) -> dict:
     """
-    homr MusicXML → 단(new-system)마다 마디마다 음가 토큰.
+    homr MusicXML → 단(new-system)마다 마디마다 두 목록.
 
-    토큰은 박 단위 길이(4분음표 = 1)의 짧은 문자열 — 쉼표는 'r' 를 붙인다.
+    dur:   음가 토큰 — 박 단위 길이(4분음표 = 1)의 짧은 문자열, 쉼표는 'r' 를 붙인다.
+    pitch: 같은 자리의 음높이 'F#5'·'Bb4'(쉼표는 'r') — 임시표 대조용.
+    key:   그 마디의 조표 fifths — 우리 조표 판독과 대조용.
     화음 구성음·꾸밈음·2성부는 뺀다(박을 차지하지 않거나 우리가 안 읽는 것).
     """
     root = ET.parse(path).getroot()
     part = next(root.iter("part"))
-    div, out = 1, [[]]
+    div, fifths, dur, pitch, key = 1, None, [[]], [[]], [[]]
     for i, m in enumerate(part.iter("measure")):
         pr = m.find("print")
         if i and pr is not None and pr.get("new-system") == "yes":
-            out.append([])
+            dur.append([]); pitch.append([]); key.append([])
         at = m.find("attributes")
         if at is not None and at.find("divisions") is not None:
             div = int(at.find("divisions").text)
-        seq = []
+        for a in m.iter("attributes"):         # 한 마디에 attributes 가 여럿일 수 있다
+            if a.findtext("key/fifths") is not None:
+                fifths = int(a.findtext("key/fifths"))
+        seq, ps = [], []
         for n in m.iter("note"):
             if n.find("chord") is not None or n.find("grace") is not None:
                 continue
@@ -73,7 +78,16 @@ def systems(path: str) -> list[list[list[str]]]:
             d = n.find("duration")
             if d is None:
                 continue
-            seq.append(("r" if n.find("rest") is not None else "")
-                       + f"{int(d.text) / div:g}")
-        out[-1].append(seq)
-    return out
+            rest = n.find("rest") is not None
+            seq.append(("r" if rest else "") + f"{int(d.text) / div:g}")
+            p = n.find("pitch")
+            if rest or p is None:
+                ps.append("r")
+            else:
+                alt = int(float(p.findtext("alter") or 0))
+                ps.append(p.findtext("step") + ("#" * alt if alt > 0 else "b" * -alt)
+                          + p.findtext("octave"))
+        dur[-1].append(seq)
+        pitch[-1].append(ps)
+        key[-1].append(fifths)
+    return {"dur": dur, "pitch": pitch, "key": key}

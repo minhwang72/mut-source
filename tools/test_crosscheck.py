@@ -108,3 +108,57 @@ def test_stale_count_review_dropped_after_fix():
 if __name__ == "__main__":
     test_stale_count_review_dropped_after_fix()
     print("ok stale")
+
+
+def test_homr_resolves_our_guess():
+    # 우리가 8분 둘 중 하나를 4분으로 찍었다(guessed) — homr 는 다른 쪽을 골랐다
+    a, b = n("quarter", guessed=True), n("eighth")
+    c, d = n("eighth", guessed=True), n("half")
+    s = st([a, b, c, d])                     # 1 + .5 + .5 + 2 = 4
+    r = merge(s, [[["0.5", "0.5", "1", "2"]]])
+    assert r.get("resolved") == 1
+    assert [x["duration"] for x in (a, b, c, d)] == ["eighth", "eighth", "quarter", "half"]
+    assert not any(x["guessed"] for x in (a, b, c, d))
+
+
+def test_disagreement_on_unguessed_note_still_blocks():
+    a, b = n("quarter", guessed=True), n("quarter")
+    c, d = n("half"), n("whole", rest=False)
+    s = st([n("half"), n("half")])
+    s["systems"][0]["notes"][0]["guessed"] = True
+    r = merge(s, [[["1", "1", "2"]]])        # 개수부터 다르다 — 고르기가 아니다
+    assert r.get("resolved") is None
+
+
+if __name__ == "__main__":
+    test_homr_resolves_our_guess()
+    test_disagreement_on_unguessed_note_still_blocks()
+    print("ok resolve")
+
+
+def _n(m, pos, **k):
+    return dict({"measure": m, "duration": "quarter", "dotted": False, "rest": False,
+                 "pos": pos}, **k)
+
+
+def test_accidental_mismatch_blocks():
+    # 우리: ♮ 로 붙임(B4) / homr: Bb4 — 같은 자리, 다른 임시표 → 막는다
+    s = {"beats": 4, "sourceFifths": 1, "systems": [{"system": 0, "srcFifths": 1, "notes": [
+        _n(1, "G4"), _n(1, "A4"), _n(1, "B4", natural=True), _n(1, "C5")]}]}
+    r = merge(s, {"dur": [[["1", "1", "1", "1"]]], "pitch": [[["G4", "A4", "Bb4", "C5"]]],
+                  "key": [[1]]})
+    assert r["accDiff"] == 1 and any("임시표" in x for x in s["systems"][0]["review"])
+
+
+def test_undercounted_key_is_fixed():
+    # A장조(♯3)를 ♯2 로 읽었다 — G 가 둘 다 G# 로 어긋난다 → 조표를 3 으로
+    s = {"beats": 4, "sourceFifths": 3, "systems": [{"system": 0, "srcFifths": 2, "notes": [
+        _n(1, "G4"), _n(1, "A4"), _n(1, "G4"), _n(1, "F4")]}]}
+    r = merge(s, {"dur": [[["1", "1", "1", "1"]]], "pitch": [[["G#4", "A4", "G#4", "F#4"]]],
+                  "key": [[3]]})
+    assert s["systems"][0]["srcFifths"] == 3 and r["accDiff"] == 0
+    assert not s["systems"][0].get("review")
+
+
+if __name__ == "__main__":
+    test_accidental_mismatch_blocks(); test_undercounted_key_is_fixed(); print("ok pitch")

@@ -481,6 +481,55 @@ def promote_heads(grp, got, spares, strict, st, spacing: float, gray,
     return grp, got, n
 
 
+def staff_pos(head: dict, st) -> str:
+    """높은음자리표 오선 위 머리 자리 → 'F5' 같은 음이름(임시표 전). 맨 아래 줄 = E4."""
+    half = (st.bottom - st.top) / 8.0
+    k = 30 + int(round((st.bottom - (head["y"] + head["h"] / 2.0)) / half))
+    return "CDEFGAB"[k % 7] + str(k // 7)
+
+
+ALTER = {"accidental_sharp": 1, "accidental_flat": -1, "accidental_natural": 0}
+
+
+def link_accidentals(accs: list[dict], notes: list[dict], spacing: float) -> bool:
+    """
+    임시표를 바로 오른쪽 머리에 붙인다(note["accidental"] / note["natural"]).
+    전부 붙였거나 단 끝 예고 조표뿐이면 True — 하나라도 못 붙이면 False.
+
+    실측 105장: 이 연결이 없어 임시표 있는 단은 전부 막혔다 — 그것만으로
+    막힌 장이 4장(camp0814b-02 · c-02 · now0918-3 · set0802-2).
+    ♯·♮ 는 상자 가운데, ♭ 는 아래 볼록한 데(하단에서 반 칸 위)가 머리 높이다.
+    옆에 다른 임시표가 붙어 있으면 곡 중간 조표라 붙이지 않는다.
+    """
+    heads = [n for n in notes if not n["rest"] and n.get("head")]
+    ok = True
+    for a in accs:
+        ax1 = a["x"] + a["w"]
+        if not any(n["head"]["x"] > ax1 for n in heads):
+            continue                                  # 단 끝 예고 조표
+        if any(b is not a and abs(b["x"] - a["x"]) < spacing * 1.2 for b in accs):
+            ok = False                                # 곡 중간 조표 무더기
+            continue
+        ay = (a["y"] + a["h"] - spacing * 0.5 if a["class"] == "accidental_flat"
+              else a["y"] + a["h"] / 2)
+        cand = [n for n in heads
+                if -spacing * 0.5 <= n["head"]["x"] - ax1 <= spacing * 1.5
+                and abs(n["head"]["y"] + n["head"]["h"] / 2 - ay) <= spacing * 0.6]
+        if not cand:
+            ok = False
+            continue
+        n = min(cand, key=lambda n: (n["head"]["x"],
+                                     abs(n["head"]["y"] + n["head"]["h"] / 2 - ay)))
+        alter = ALTER.get(a["class"])
+        if alter is None:
+            ok = False
+        elif alter == 0:
+            n["natural"] = True
+        else:
+            n["accidental"] = alter
+    return ok
+
+
 def build_from(boxes, staves, strict, spacing: float, gray,
                counts: list[dict], curves: list[dict] | None = None,
                sections: list[int] | None = None,
@@ -786,6 +835,9 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                               "slurStart": bool(it.get("slurStart")),
                               "slurStop": bool(it.get("slurStop")),
                               **({"head": it["head"]} if "head" in it else {}),
+                              # 오선 위치의 음이름(임시표 전) — homr 와 음높이 대조용
+                              **({"pos": staff_pos(it["head"], staves[si])}
+                                 if "head" in it and len(staves[si].lines) == 5 else {}),
                               # 박자로 승격한 흐린 붙임점 — 검출이 아니라
                               # 추론이므로 표시해 둔다.
                               "chord": bool(it.get("chord")),
@@ -823,14 +875,15 @@ def build_from(boxes, staves, strict, spacing: float, gray,
         pk = sorted(mi + 1 for s_, mi in pickups if s_ == si)   # 마디 번호는 1부터
         if pk:
             entry["pickups"] = pk
-        # Accidental glyphs are detected, but are not yet reliably associated
-        # with individual notes. Do not silently treat them as key defaults.
+        # 조표 구간 뒤의 임시표는 바로 오른쪽 머리에 붙인다. 하나라도 못 붙이면
+        # 조표 기본값으로 조용히 넘기지 않고 막는다.
         grp = bysys[si]
         clefs = [b for b in grp if b["class"] == "clef_g"]
         if clefs:
             edge = max(b["x"] + b["w"] for b in clefs) + spacing * 4.5
-            if any(b["class"].startswith("accidental_")
-                   and b["x"] + b["w"] / 2 > edge for b in grp):
+            accs = [b for b in grp if b["class"].startswith("accidental_")
+                    and b["x"] + b["w"] / 2 > edge]
+            if accs and not link_accidentals(accs, notes, spacing):
                 entry.setdefault("review", []).append("멜로디 임시표와 음표의 연결 확인 필요")
         # Preserve discrepancies even when geometry and durations came from
         # the same detector (and therefore trivially agree with one another).

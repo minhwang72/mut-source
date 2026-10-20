@@ -471,7 +471,11 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
                          Image.LANCZOS)
         ink_b, staves_b = cv.find_staves_best(big)
         sw.lap("확대·오선재검출")
-        if staves_b:
+        # **단 개수가 같을 때만 확대본을 쓴다.** LANCZOS 가 옅은 오선을 번지게
+        # 해 확대본에서 단이 사라진다 — 실측 105장 중 16장, set0816-5 는 1번
+        # 도돌이 줄이 통째로 빠진 채 '통과'했다(펜 학습 모델). local_reader 는
+        # 이미 이렇게 한다. 원본 잉크를 키워 쓰는 쪽도 재 봤지만 통과 0 그대로.
+        if staves_b and len(staves_b) == len(staves):
             r = lambda v: int(round(v * scale))
             for sysd in extraction["systems"]:
                 for k in ("staffTop", "staffBottom", "headEnd"):

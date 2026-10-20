@@ -84,6 +84,9 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
     """
     stat = {"agree": 0, "homr": 0, "ours": 0, "conflict": 0, "skipped": 0}
     systems = struct.get("systems") or []
+    pitch = hkey = None
+    if isinstance(homr, dict):                 # {"dur", "pitch", "key"} — homr_runner.systems
+        homr, pitch, hkey = homr.get("dur"), homr.get("pitch"), homr.get("key")
     if not homr:
         stat["skipped"] = len(systems)
         return stat
@@ -95,10 +98,14 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
     seq_o = [[_tok(u[0]) for u in _units([n for n in systems[si]["notes"] if n["measure"] == mi])]
              for si, mi in ours_m]
     seq_t = [m for sysm in homr for m in sysm]
-    pairs = _align(seq_o, seq_t)       # 우리 마디 k → homr 토큰 목록 또는 None
+    pit_t = [m for sysm in pitch for m in sysm] if pitch else None
+    key_t = [m for sysm in hkey for m in sysm] if hkey else None
+    pairs, at = _align(seq_o, seq_t)   # 우리 마디 k → homr 토큰 목록 / homr 마디 번호
+    allchecks: list[list] = []
     for si, sys_ in enumerate(systems):
         notes = sys_.get("notes") or []
         new: list[dict] = []
+        checks = []                    # 박이 같게 읽힌 마디: (마디, 음표, homr 음높이, homr 조표)
         for mi in sorted({n["measure"] for n in notes}):
             mine = [n for n in notes if n["measure"] == mi]
             k = ours_m.index((si, mi))
@@ -107,10 +114,31 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
                 stat["skipped"] += 1
                 new += mine
                 continue
-            new += _decide(sys_, mi, mine, theirs, full, stat)
+            got = _decide(sys_, mi, mine, theirs, full, stat)
+            if pit_t and k in at and [_tok(u[0]) for u in _units(got)] == theirs:
+                checks.append((mi, got, pit_t[at[k]], key_t[at[k]] if key_t else None))
+            new += got
         sys_["notes"] = new
+        allchecks.append(checks)
+    # 조표는 구간(같은 조표가 이어지는 단들) 단위로 맞춘다 — 단마다 따로 고치면
+    # 대조할 음이 없는 단만 옛 값으로 남아 구간 안에서 조표가 들쭉날쭉해진다
+    run: list[int] = []
+    for si in range(len(systems) + 1):
+        if run and (si == len(systems) or _fifths(systems[si], struct) != _fifths(systems[run[0]], struct)):
+            _key_check([systems[i] for i in run], [allchecks[i] for i in run],
+                       _fifths(systems[run[0]], struct), stat)
+            run = []
+        if si < len(systems):
+            run.append(si)
+    for sys_ in systems:
         _drop_stale_count_review(sys_, full)
     return stat
+
+
+def _fifths(sys_: dict, struct: dict):
+    """rebuild.js 와 같게 — 단별 값이 없으면 쪽 전체 값."""
+    f = sys_.get("srcFifths")
+    return struct.get("sourceFifths") if f is None else f
 
 
 def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
@@ -129,6 +157,29 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
         if got is not None:
             stat["homr"] += 1
             return got
+    # **우리가 찍은 자리만 다르면 homr 가 골라 준 것이다.** fit_page 는 답이
+    # 여럿일 때 하나를 찍고 guessed 를 붙인다. homr 가 찍지 않은 음표에서는 전부
+    # 같고 찍은 음표에서만 다르면, 독립된 판독기가 후보 중 하나를 고른 셈이다 —
+    # 그 답을 쓰고 표시를 지운다. 찍지 않은 음표에서도 다르면 아래에서 막는다.
+    if ok_o and ok_t and len(ours) == len(theirs):
+        diff = [i for i, (x, y) in enumerate(zip(ours, theirs)) if x != y]
+        if diff and all(units[i][0].get("guessed")
+                        and ours[i].startswith("r") == theirs[i].startswith("r")
+                        for i in diff):
+            for i in diff:
+                d = _dur(theirs[i])
+                if d is None:
+                    break
+            else:
+                for i in diff:
+                    name, dot = _dur(theirs[i])
+                    for x in units[i]:
+                        x["duration"], x["dotted"] = name, dot
+                for n in mine:
+                    n["guessed"] = False
+                    n["crossChecked"] = True
+                stat["resolved"] = stat.get("resolved", 0) + 1
+                return mine
     if ok_o and ok_t and not _ours_saw_heads(units, theirs):
         stat["conflict"] += 1
         sys_.setdefault("review", []).append(f"마디 {mi}: 두 판독이 다르게 읽었습니다")
@@ -142,7 +193,7 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
 SIMILAR = 0.5
 
 
-def _align(a: list[list[str]], b: list[list[str]]) -> dict[int, list[str]]:
+def _align(a: list[list[str]], b: list[list[str]]) -> tuple[dict[int, list[str]], dict[int, int]]:
     """
     우리 마디 목록 a 와 homr 마디 목록 b 를 정렬해 a 의 자리마다 짝 토큰을 준다.
 
@@ -187,6 +238,7 @@ def _align(a: list[list[str]], b: list[list[str]]) -> dict[int, list[str]]:
         i, j = pi, pj
     diag = {(pi, pj) for pi, pj, how in path if how == "pair"}
     out: dict[int, list[str]] = {}
+    at: dict[int, int] = {}            # 1:1 로 짝지은 자리만 — homr 마디 번호
     for pi, pj, how in path:
         if how == "pair":
             # 비슷하면 짝. 많이 달라도 **앞뒤가 1:1 로 짝지어진 자리**면 같은
@@ -196,11 +248,108 @@ def _align(a: list[list[str]], b: list[list[str]]) -> dict[int, list[str]]:
             after = (pi, pj) == (n - 1, m - 1) or (pi + 1, pj + 1) in diag
             if sim(a[pi], b[pj]) or (before and after):
                 out[pi] = b[pj]
+                at[pi] = pj
         elif how == "a2":
             out[pi], out[pi + 1] = a[pi], a[pi + 1]
         elif how == "b2":
             out[pi] = a[pi]
-    return out
+    return out, at
+
+
+def _alter(n: dict, fifths: int, acc: dict, key: dict) -> int:
+    """web/source-pitch.js 와 같은 규칙 — 임시표는 그 마디·그 옥타브, 붙임줄은 넘어간다."""
+    base = n["pos"]
+    explicit = 0 if n.get("natural") else n.get("accidental")
+    if explicit is not None:
+        acc[base] = explicit
+    alt = acc.get(base)
+    if alt is None and key["tie"] and key["tie"][0] == base:
+        alt = key["tie"][1]
+    if alt is None:
+        order = "FCGDAEB" if fifths >= 0 else "BEADGCF"
+        alt = (1 if fifths > 0 else -1) if base[0] in order[:abs(fifths)] else 0
+    key["tie"] = (base, alt) if n.get("tie") else None
+    return alt
+
+
+def _compare(checks, fifths: int) -> tuple[int, list[int], list[str]]:
+    """조표 fifths 로 읽었을 때 (맞은 음 수, 임시표가 다른 마디, 자리가 다른 음)."""
+    agree, acc_bad, pos_bad = 0, [], []
+    key = {"tie": None}
+    for mi, got, theirs, _ in checks:
+        acc: dict = {}
+        for u, t in zip(_units(got), theirs):
+            if u[0].get("rest") or t == "r" or any("pos" not in x for x in u):
+                key["tie"] = None
+                continue
+            # 화음이면 homr 는 구성음 하나만 준다 — 같은 자리의 구성음과 맞춘다
+            tie, alts = key["tie"], []
+            for x in u:
+                key["tie"] = tie
+                alts.append(_alter(x, fifths, acc, key))
+            base = t[0] + t.lstrip("ABCDEFG#b")
+            hit = [a for x, a in zip(u, alts) if x["pos"] == base]
+            if not hit:
+                pos_bad.append(f"{mi} {u[0]['pos']}/{t}")
+            elif hit[0] == t.count("#") - t[1:].count("b"):
+                agree += 1
+            else:
+                acc_bad.append(mi)
+    return agree, acc_bad, pos_bad
+
+
+def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
+    """
+    **박이 같게 읽힌 마디에서 음높이를 맞춰 본다.** 음이름이 같은데 올림·내림이
+    다르면 임시표나 조표를 잘못 읽은 것이다 — 조용히 틀린 음을 내지 않게 막는다
+    (실측 camp0814b-02 단7: ♭ 를 ♮ 로 읽었고, 다른 ♭ 하나는 검출조차 안 됐다).
+
+    **조표를 하나 덜(더) 센 것이면 고친다.** 조표 판독이 ±1 흔들린다(실측
+    set0816-5: A장조 ♯3 을 ♯2 로). 같은 조표 구간 전체를 homr 가 읽은 조표나
+    ±1 로 다시 맞춰 보고, 어긋남이 전부 사라지는 값이 하나뿐이면 그것을 쓴다.
+    """
+    if not isinstance(ours, int):
+        return
+    flat = [c for cs in checks for c in cs]
+    if not flat:
+        return
+
+    def run(f):
+        agree, pos, bad = 0, [], []
+        for sys_, cs in zip(group, checks):
+            a, b, p = _compare(cs, f)
+            agree += a
+            pos += [f"{sys_.get('system')}:{w}" for w in p]
+            bad += [(sys_, mi) for mi in b]
+        return agree, bad, pos
+
+    agree, bad, pos = run(ours)
+    # 어긋난 음이 하나뿐이면 조표가 아니라 그 음(임시표)일 수 있다 — 고치지 않고 막는다
+    # (실측 wish0906-1: 대조 음 8개 중 1개로 ♭2 → 0 으로 바꿨는데 정답은 ♭1)
+    if len(bad) >= 2:
+        theirs = {c[3] for c in flat if isinstance(c[3], int)}
+        cands = ({ours - 1, ours + 1} | theirs) - {ours}
+        fits = [f for f in cands if abs(f) <= 7 and not run(f)[1]]
+        if len(fits) == 1:
+            agree2, _, pos = run(fits[0])
+            if agree2 >= agree + len(bad):
+                for sys_ in group:
+                    sys_["srcFifths"] = fits[0]
+                stat["keyFixed"] = stat.get("keyFixed", 0) + 1
+                agree, bad = agree2, []
+    stat["pitchAgree"] = stat.get("pitchAgree", 0) + agree
+    stat["posDiff"] = stat.get("posDiff", 0) + len(pos)
+    stat["accDiff"] = stat.get("accDiff", 0) + len(bad)
+    if pos:
+        stat.setdefault("posWhere", []).extend(pos)
+    seen = set()
+    for sys_, mi in bad:
+        if (id(sys_), mi) in seen:
+            continue
+        seen.add((id(sys_), mi))
+        stat.setdefault("accWhere", []).append(f"{sys_.get('system')}:{mi}")
+        sys_.setdefault("review", []).append(
+            f"마디 {mi}: 임시표가 두 판독에서 다릅니다 — 원본 확인 필요")
 
 
 def _drop_stale_count_review(sys_: dict, full: float) -> None:
