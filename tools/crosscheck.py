@@ -207,6 +207,17 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
                     n["crossChecked"] = True
                 stat["resolved"] = stat.get("resolved", 0) + 1
                 return mine
+    # **우리가 찍은 마디에서 homr 가 같은 머리 수로 다르게 읽었으면 homr 를 쓴다.**
+    # 찍었다는 건 우리 판독이 박을 못 맞춰 후보 중 하나를 골랐다는 뜻이다. 105장에서
+    # 이런 마디 66개 중 원본과 대조한 6곳(놓친 8분쉼표·점4분쉼표·흐린 붙임점) 전부
+    # homr 가 맞았다. 머리 수가 다르면 짝지을 수 없어 아래에서 막는다.
+    if ok_o and ok_t and any(u[0].get("guessed") for u in units):
+        got = _adopt(units, theirs, mi)
+        if got is not None:
+            for n in got:
+                n["crossChecked"] = True
+            stat["homrGuess"] = stat.get("homrGuess", 0) + 1
+            return got
     # **둘 다 짧은데 다르게 읽은 마디도 막는다.** 단 끝에서 쪼개진 마디는 둘 다
     # 한 마디가 안 되는 게 정상이라 예전엔 비교 없이 우리 쪽을 썼다 — 그런데
     # 점4분쉼표를 4분쉼표로, 8분음표를 4분음표로 읽어 짝의 합(3+1)만 맞춘 오답이

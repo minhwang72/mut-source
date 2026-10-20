@@ -211,3 +211,19 @@ def test_faint_dot_pair_follows_homr():
 
 if __name__ == "__main__":
     test_faint_dot_pair_follows_homr(); print("ok dot")
+
+
+def test_guessed_measure_takes_homr_with_same_heads():
+    def e(d, **k):
+        return dict({"measure": 1, "duration": d, "dotted": False, "rest": False}, **k)
+    # 우리: 첫 음을 4분으로 찍었다 / homr: 8분쉼표 + 8분 — 머리 수 같음
+    notes = [e("quarter", guessed=True)] + [e("eighth") for _ in range(6)]
+    s = {"beats": 4, "systems": [{"system": 0, "notes": notes}]}
+    r = merge(s, [[["r0.5"] + ["0.5"] * 7]])
+    got = s["systems"][0]["notes"]
+    assert r.get("homrGuess") == 1 and got[0]["rest"] and got[1]["duration"] == "eighth"
+    assert not any(n.get("guessed") for n in got)
+
+
+if __name__ == "__main__":
+    test_guessed_measure_takes_homr_with_same_heads(); print("ok guess")
