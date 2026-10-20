@@ -131,8 +131,32 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
         if si < len(systems):
             run.append(si)
     for sys_ in systems:
+        _agreed_pickup(sys_, full, stat)
         _drop_stale_count_review(sys_, full)
     return stat
+
+
+def _agreed_pickup(sys_: dict, full: float, stat: dict) -> None:
+    """
+    **단 첫 마디가 짧은데 두 판독이 똑같이 읽었으면 못갖춘마디다.**
+
+    곡 첫머리의 여린박(실측 wish0809-7 등 4장: '16 16 8' 1박), 2번 도돌이 줄 첫
+    마디(camp0814b-10: 1번 줄과 같은 2박), 구간을 다시 여는 여린박(wish0823-5)은
+    짝지을 끝 마디가 없어 막혔다. 독립된 두 판독기가 같은 음가로 읽었으면 음을
+    놓친 게 아니라 원래 짧은 마디다 — 게이트가 봐 주는 pickups 에 넣는다.
+    """
+    notes = sys_.get("notes") or []
+    if not notes:
+        return
+    m0 = min(n["measure"] for n in notes)
+    first = [n for n in notes if n["measure"] == m0]
+    beats = sum(V[n["duration"]] * (1.5 if n.get("dotted") else 1.0)
+                for n in first if not n.get("chord"))
+    if 0 < beats < full - 1e-6 and all(n.get("crossChecked") for n in first):
+        pk = sys_.setdefault("pickups", [])
+        if m0 not in pk:
+            pk.append(m0)
+            stat["pickup"] = stat.get("pickup", 0) + 1
 
 
 def _fifths(sys_: dict, struct: dict):
@@ -180,7 +204,12 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
                     n["crossChecked"] = True
                 stat["resolved"] = stat.get("resolved", 0) + 1
                 return mine
-    if ok_o and ok_t and not _ours_saw_heads(units, theirs):
+    # **둘 다 짧은데 다르게 읽은 마디도 막는다.** 단 끝에서 쪼개진 마디는 둘 다
+    # 한 마디가 안 되는 게 정상이라 예전엔 비교 없이 우리 쪽을 썼다 — 그런데
+    # 점4분쉼표를 4분쉼표로, 8분음표를 4분음표로 읽어 짝의 합(3+1)만 맞춘 오답이
+    # 통과했다(실측 wish0823-5 단1 끝·단2 첫: homr 는 'r2 r1.5' · '0.5' 로 정답).
+    both_short = _len(ours) < full - 1e-6 and _len(theirs) < full - 1e-6
+    if ((ok_o and ok_t) or both_short) and not _ours_saw_heads(units, theirs):
         stat["conflict"] += 1
         sys_.setdefault("review", []).append(f"마디 {mi}: 두 판독이 다르게 읽었습니다")
     else:
@@ -290,7 +319,7 @@ def _compare(checks, fifths: int) -> tuple[int, list[int], list[str]]:
             base = t[0] + t.lstrip("ABCDEFG#b")
             hit = [a for x, a in zip(u, alts) if x["pos"] == base]
             if not hit:
-                pos_bad.append(f"{mi} {u[0]['pos']}/{t}")
+                pos_bad.append((mi, f"{u[0]['pos']}/{t}"))
             elif hit[0] == t.count("#") - t[1:].count("b"):
                 agree += 1
             else:
@@ -319,7 +348,7 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         for sys_, cs in zip(group, checks):
             a, b, p = _compare(cs, f)
             agree += a
-            pos += [f"{sys_.get('system')}:{w}" for w in p]
+            pos += [(sys_, mi, w) for mi, w in p]
             bad += [(sys_, mi) for mi in b]
         return agree, bad, pos
 
@@ -340,8 +369,14 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     stat["pitchAgree"] = stat.get("pitchAgree", 0) + agree
     stat["posDiff"] = stat.get("posDiff", 0) + len(pos)
     stat["accDiff"] = stat.get("accDiff", 0) + len(bad)
-    if pos:
-        stat.setdefault("posWhere", []).extend(pos)
+    # **음 자리가 다르면 막는다.** 머리 상자가 반 칸 위로 치우쳐 C5 를 D5 로 읽은
+    # 일이 있었다(실측 wish0809-7 단2: 상자 중심이 줄·칸 경계 근처). 통과 14장은
+    # 이 어긋남이 0 이라, 막아도 잃는 통과가 없다.
+    for sys_, mi, w in pos:
+        stat.setdefault("posWhere", []).append(f"{sys_.get('system')}:{mi} {w}")
+        msg = f"마디 {mi}: 음 높이가 두 판독에서 다릅니다 — 원본 확인 필요"
+        if msg not in sys_.setdefault("review", []):
+            sys_["review"].append(msg)
     seen = set()
     for sys_, mi in bad:
         if (id(sys_), mi) in seen:

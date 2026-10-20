@@ -162,3 +162,22 @@ def test_undercounted_key_is_fixed():
 
 if __name__ == "__main__":
     test_accidental_mismatch_blocks(); test_undercounted_key_is_fixed(); print("ok pitch")
+
+
+def test_agreed_short_first_measure_is_pickup():
+    s = {"beats": 4, "systems": [{"system": 0, "notes": [
+        dict(_n(1, "C5"), duration="16th"), dict(_n(1, "D5"), duration="16th"),
+        dict(_n(1, "E5"), duration="eighth"),
+        _n(2, "C5"), _n(2, "C5"), _n(2, "C5"), _n(2, "C5")]}]}
+    merge(s, [[["0.25", "0.25", "0.5"], ["1", "1", "1", "1"]]])
+    assert s["systems"][0]["pickups"] == [1]
+    # homr 가 다르게 읽었으면 봐 주지 않는다
+    s["systems"][0].pop("pickups")
+    for n in s["systems"][0]["notes"]:
+        n.pop("crossChecked", None)
+    merge(s, [[["0.25", "0.25", "0.25"], ["1", "1", "1", "1"]]])
+    assert "pickups" not in s["systems"][0]
+
+
+if __name__ == "__main__":
+    test_agreed_short_first_measure_is_pickup(); print("ok pickup")

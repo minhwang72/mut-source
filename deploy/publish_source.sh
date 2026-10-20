@@ -19,7 +19,7 @@ find eval -type d -empty -delete
 # 공개본 안내는 이전 공개본의 README 머리말을 그대로 쓴다
 git show HEAD:README.md | sed -n '1,/^$/p' > /tmp/mut_pub_head.md
 cat /tmp/mut_pub_head.md README.md > README.new && mv README.new README.md
-if grep -rIlE "sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|010-[0-9]{4}-[0-9]{4}|copyright \(c\) 1995|cocoa" . ; then
+if grep -rIlE --exclude=publish_source.sh "sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|010-[0-9]{4}-[0-9]{4}|copyright \(c\) 1995|cocoa" . ; then
   echo "✗ 공개하면 안 되는 내용이 있다 — 위 파일을 확인하라"; exit 1
 fi
 git add -A
