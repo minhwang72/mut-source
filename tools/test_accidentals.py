@@ -54,3 +54,18 @@ if __name__ == "__main__":
     test_links_flat_and_natural(); test_courtesy_key_at_end_is_ignored()
     test_mid_system_key_cluster_blocks(); test_staff_pos()
     print("ok")
+
+
+def test_chord_member_follows_its_base():
+    from detstruct import order_chords
+    def n(x, chord=False, m=1):
+        return {"measure": m, "chord": chord, "rest": False,
+                "head": {"x": x, "y": 0, "w": 10, "h": 8}}
+    a, b, c = n(100, chord=True), n(102), n(150)
+    assert order_chords([a, b, c]) == [b, a, c]          # 구성음이 앞에 왔다 → 뒤로
+    d, e, f = n(100), n(101, chord=True), n(150)
+    assert order_chords([d, e, f]) == [d, e, f]          # 이미 바르면 그대로
+
+
+if __name__ == "__main__":
+    test_chord_member_follows_its_base(); print("ok chord")

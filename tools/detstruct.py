@@ -481,6 +481,35 @@ def promote_heads(grp, got, spares, strict, st, spacing: float, gray,
     return grp, got, n
 
 
+def order_chords(notes: list[dict]) -> list[dict]:
+    """
+    **화음 구성음은 제 바탕음 바로 뒤에 둔다.** chord=True 는 '앞 음과 같이
+    울린다'는 뜻인데(MusicXML <chord/>, rebuild 박 계산), 머리 순서가 뒤집혀
+    구성음이 바탕음 **앞**에 오는 일이 있었다(실측 wish0906-2 단1·단7: 마디 첫
+    음이 구성음 — 앞 마디 끝 음에 붙거나 따로 세어져 4.5박). 구성음 머리가
+    뒤 음과 더 가까우면 그 뒤로 옮긴다.
+    """
+    out = list(notes)
+
+    def cx(n):
+        h = n.get("head")
+        return h["x"] + h["w"] / 2.0 if h else None
+    i = 0
+    while i < len(out):
+        n = out[i]
+        if n.get("chord") and i + 1 < len(out) and not out[i + 1].get("chord") \
+                and out[i + 1]["measure"] == n["measure"]:
+            prev = out[i - 1] if i > 0 and out[i - 1]["measure"] == n["measure"] else None
+            a, b = cx(n), cx(out[i + 1])
+            p = cx(prev) if prev is not None else None
+            if a is not None and b is not None and (p is None or abs(a - b) < abs(a - p)):
+                out[i], out[i + 1] = out[i + 1], n
+                i += 2
+                continue
+        i += 1
+    return out
+
+
 def staff_pos(head: dict, st) -> str:
     """높은음자리표 오선 위 머리 자리 → 'F5' 같은 음이름(임시표 전). 맨 아래 줄 = E4."""
     half = (st.bottom - st.top) / 8.0
@@ -868,6 +897,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                               "repeatFixed": bool(it.get("repeatFixed")),
                               "repeatDiff": bool(it.get("repeatDiff")),
                               "fitted": bool(it.get("fitted"))})
+        notes = order_chords(notes)
         entry = {
             "system": si, "measures": max(1, len(ms)), "notes": notes,
             "marks": (counts[si].get("marks") or []) if si < len(counts) else [],

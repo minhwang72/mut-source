@@ -227,3 +227,23 @@ def test_guessed_measure_takes_homr_with_same_heads():
 
 if __name__ == "__main__":
     test_guessed_measure_takes_homr_with_same_heads(); print("ok guess")
+
+
+def test_extra_head_dropped_by_pitch():
+    def q(pos, d="quarter"):
+        return {"measure": 1, "duration": d, "dotted": False, "rest": False, "pos": pos}
+    # 우리: ♩=(A5 자리 헛머리) + 온음표 + 4분 → 6박 / homr: 온음표 하나(F4)
+    notes = [q("A5"), q("F4", "whole"), q("C4")]
+    s = {"beats": 4, "systems": [{"system": 0, "notes": notes}]}
+    r = merge(s, {"dur": [[["4"]]], "pitch": [[["F4"]]], "key": [[0]]})
+    got = s["systems"][0]["notes"]
+    assert r.get("dropped") == 1 and len(got) == 1 and got[0]["pos"] == "F4"
+    # 같은 음이 둘이라 어느 머리를 버릴지 모르면 손대지 않는다
+    notes = [q("F4"), q("F4"), q("G4", "whole")]
+    s = {"beats": 4, "systems": [{"system": 0, "notes": notes}]}
+    r = merge(s, {"dur": [[["2", "2"]]], "pitch": [[["F4", "G4"]]], "key": [[0]]})
+    assert not r.get("dropped")
+
+
+if __name__ == "__main__":
+    test_extra_head_dropped_by_pitch(); print("ok drop")

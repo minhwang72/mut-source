@@ -42,11 +42,19 @@ def _dur(tok: str):
 def _units(notes: list[dict]) -> list[list[dict]]:
     """박을 차지하는 음(앞장선 음)마다 [그 음, 화음 구성음…]."""
     out: list[list[dict]] = []
+    lead: list[dict] = []
     for n in notes:
         if n.get("chord") and out:
             out[-1].append(n)
+        elif n.get("chord"):
+            # 마디 첫 음에 화음 표시가 붙은 구성음 — 박을 차지하지 않으니 다음 음에 묶는다
+            # (실측 wish0906-2 단1: 이걸 따로 세서 우리 마디가 4.5박이 됐다)
+            lead.append(n)
         else:
-            out.append([n])
+            out.append([n] + lead)
+            lead = []
+    if lead:
+        out.append(lead)
     return out
 
 
@@ -114,7 +122,8 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
                 stat["skipped"] += 1
                 new += mine
                 continue
-            got = _decide(sys_, mi, mine, theirs, full, stat)
+            got = _decide(sys_, mi, mine, theirs, full, stat,
+                          pit_t[at[k]] if pit_t and k in at else None)
             if pit_t and k in at and [_tok(u[0]) for u in _units(got)] == theirs:
                 checks.append((mi, got, pit_t[at[k]], key_t[at[k]] if key_t else None))
             new += got
@@ -165,7 +174,7 @@ def _fifths(sys_: dict, struct: dict):
     return struct.get("sourceFifths") if f is None else f
 
 
-def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
+def _decide(sys_, mi, mine, theirs, full, stat, pitch=None) -> list[dict]:
     """짝지은 한 마디를 판정한다 — 규칙은 모듈 머리말."""
     units = _units(mine)
     ours = [_tok(u[0]) for u in units]
@@ -178,6 +187,10 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
         return mine
     if ok_t and not ok_o:
         got = _adopt(units, theirs, mi)
+        if got is None:
+            got = _drop_extra(units, theirs, pitch, mi)
+            if got is not None:
+                stat["dropped"] = stat.get("dropped", 0) + 1
         if got is not None:
             stat["homr"] += 1
             return got
@@ -229,6 +242,42 @@ def _decide(sys_, mi, mine, theirs, full, stat) -> list[dict]:
     else:
         stat["ours"] += 1
     return mine
+
+
+def _base(p: str) -> str:
+    """'F#5' → 'F5' (임시표 뺀 음이름)."""
+    return p[0] + p.lstrip("ABCDEFG#b")
+
+
+def _drop_extra(units, theirs, pitch, mi) -> list[dict] | None:
+    """
+    **우리가 머리를 한두 개 더 본 마디 — 음높이로 짝지어 남는 것을 버린다.**
+
+    박이 안 맞는 우리 마디에 homr 는 박이 맞는데 머리가 우리보다 적으면, 우리 쪽에
+    헛머리가 있다(실측: 빠르기 표시 '♩=', 음자리표 꼬리, 붙임줄 위 얼룩). homr 음높이
+    순서와 우리 오선 자리 순서를 앞에서·뒤에서 각각 맞춰 보고, **두 방향이 같은
+    머리를 고를 때만**(짝이 하나뿐일 때만) 나머지를 버리고 homr 음가를 입힌다.
+    """
+    if not pitch:
+        return None
+    heads = [u for u in units if not u[0].get("rest")]
+    tp = [_base(p) for p in pitch if p != "r"]
+    if not 1 <= len(heads) - len(tp) <= 2:
+        return None
+
+    def pick(hs, ps):
+        out, j = [], 0
+        for u in hs:
+            if j < len(ps) and any(x.get("pos") == ps[j] for x in u):
+                out.append(id(u))
+                j += 1
+        return out if j == len(ps) else None
+    fwd = pick(heads, tp)
+    bwd = pick(heads[::-1], tp[::-1])
+    if fwd is None or bwd is None or set(fwd) != set(bwd):
+        return None
+    keep = set(fwd)
+    return _adopt([u for u in units if u[0].get("rest") or id(u) in keep], theirs, mi)
 
 
 # 우리 판독이 스스로 고친(=확신 못 한) 표시 — 찍기·박 맞추기·되살린 머리·쉼표,

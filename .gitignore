@@ -64,3 +64,6 @@ eval/sweep*.json
 eval/sweep*_structs/
 eval/sweep*.log
 eval/sweep*.err
+
+# 측정용 homr 가상환경(로컬 전용)
+.homr-venv/
