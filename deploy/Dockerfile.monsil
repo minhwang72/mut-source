@@ -13,6 +13,9 @@ RUN python -m venv /opt/homr \
  && /opt/homr/bin/homr --init
 # **tools/ 도 올린다.** 판독 엔진이 전부 여기 있는데 base 이미지의 옛
 # 사본이 쓰이고 있었다 — 10/2 조표 수정(keysigpos.py)이 라이브에 없었다.
+# **검출 가중치도 올린다.** base 이미지의 omr.pt 는 펜·형광펜 없는 합성으로만
+# 학습한 옛것이다(2026-10-21 교체: 펜 합성 6천 장 미세조정, 105장 통과 25 → 28).
+COPY models/omr.pt /app/models/omr.pt
 COPY tools/ /app/tools/
 COPY server/ /app/server/
 COPY web/ /app/web/
