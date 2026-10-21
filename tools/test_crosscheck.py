@@ -247,3 +247,20 @@ def test_extra_head_dropped_by_pitch():
 
 if __name__ == "__main__":
     test_extra_head_dropped_by_pitch(); print("ok drop")
+
+
+def test_missed_modulation_splits_key_section():
+    def q(pos, m=1):
+        return {"measure": m, "duration": "quarter", "dotted": False, "rest": False, "pos": pos}
+    # 우리: 두 단 다 조표 0 / homr: 1단 G장조(F#), 2단 F장조(Bb) — 단마다 따로 고쳐야 한다
+    s = {"beats": 4, "sourceFifths": 0, "systems": [
+        {"system": 0, "srcFifths": 0, "notes": [q("F4"), q("G4"), q("F4"), q("A4")]},
+        {"system": 1, "srcFifths": 0, "notes": [q("B4"), q("A4"), q("B4"), q("C5")]}]}
+    merge(s, {"dur": [[["1"] * 4], [["1"] * 4]],
+              "pitch": [[["F#4", "G4", "F#4", "A4"]], [["Bb4", "A4", "Bb4", "C5"]]],
+              "key": [[1], [-1]]})
+    assert [x["srcFifths"] for x in s["systems"]] == [1, -1]
+
+
+if __name__ == "__main__":
+    test_missed_modulation_splits_key_section(); print("ok modulation")

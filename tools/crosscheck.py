@@ -131,9 +131,18 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
         allchecks.append(checks)
     # 조표는 구간(같은 조표가 이어지는 단들) 단위로 맞춘다 — 단마다 따로 고치면
     # 대조할 음이 없는 단만 옛 값으로 남아 구간 안에서 조표가 들쭉날쭉해진다
+    # homr 가 그 단에서 읽은 조표 — 우리가 놓친 전조를 구간 경계로 쓴다(실측 now0918-3:
+    # 우리는 9단 전부 0, homr 는 G장조 7단 + E♭장조 2단)
+    hk = []
+    for cs in allchecks:
+        ks = [c[3] for c in cs if isinstance(c[3], int)]
+        hk.append(max(set(ks), key=ks.count) if ks else None)
     run: list[int] = []
     for si in range(len(systems) + 1):
-        if run and (si == len(systems) or _fifths(systems[si], struct) != _fifths(systems[run[0]], struct)):
+        if run and (si == len(systems)
+                    or _fifths(systems[si], struct) != _fifths(systems[run[0]], struct)
+                    or (hk[si] is not None and hk[run[-1]] is not None
+                        and hk[si] != hk[run[-1]])):
             _key_check([systems[i] for i in run], [allchecks[i] for i in run],
                        _fifths(systems[run[0]], struct), stat)
             run = []
@@ -395,7 +404,7 @@ def _compare(checks, fifths: int) -> tuple[int, list, list, set]:
     agree, acc_bad, pos_bad = 0, [], []
     plain: set[str] = set()                           # 임시표 없이 맞은 음이름
     key = {"tie": None}
-    for mi, got, theirs, _ in checks:
+    for mi, got, theirs, hkey in checks:
         acc: dict = {}
         for u, t in zip(_units(got), theirs):
             if u[0].get("rest") or t == "r" or any("pos" not in x for x in u):
@@ -416,7 +425,7 @@ def _compare(checks, fifths: int) -> tuple[int, list, list, set]:
                 if not (hit[0][0].get("natural") or hit[0][0].get("accidental") is not None):
                     plain.add(base[0])
             else:
-                acc_bad.append((mi, f"{base}{hit[0][1]:+d}/{t}", hit[0][0], want))
+                acc_bad.append((mi, f"{base}{hit[0][1]:+d}/{t}", hit[0][0], want, hkey))
     return agree, acc_bad, pos_bad, plain
 
 
@@ -461,14 +470,28 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     if len(bad) >= 2:
         theirs = {c[3] for c in flat if isinstance(c[3], int)}
         cands = ({ours - 1, ours + 1} | theirs) - {ours}
-        fits = [f for f in cands if abs(f) <= 7 and not run(f)[1]]
+        # 남는 어긋남이 homr 도 이 구간과 다른 조표로 읽은 마디(전조 경계)뿐이면
+        # 맞은 것으로 본다 — 남은 음은 아래 임시표 규칙이 따로 판정한다
+        hks = [c[3] for c in flat if isinstance(c[3], int)]
+        maj = max(set(hks), key=hks.count) if hks else None
+
+        def fits_f(f):
+            left = run(f)[1]
+            return len(left) < len(bad) and all(
+                b[5] is not None and maj is not None and b[5] != maj for b in left)
+        fits = [f for f in cands if abs(f) <= 7 and fits_f(f)]
+        # 대조한 음으로는 둘 이상이 맞으면(그 음이름이 안 나와서) homr 가 읽은 조표를
+        # 고른다 — 음높이로 반박되지 않은 homr 조표다(실측 now0918-3 E♭ 구간: B 만 나와
+        # ♭1·♭3 둘 다 맞았다)
+        if len(fits) > 1 and maj in fits:
+            fits = [maj]
         if len(fits) == 1:
-            agree2, _, pos = run(fits[0])
-            if agree2 >= agree + len(bad):
+            agree2, left, pos = run(fits[0])
+            if agree2 >= agree + len(bad) - len(left):
                 for sys_ in group:
                     sys_["srcFifths"] = fits[0]
                 stat["keyFixed"] = stat.get("keyFixed", 0) + 1
-                agree, bad = agree2, []
+                agree, bad = agree2, left
     # **조표로 안 풀리는 몇 음은 homr 의 임시표를 쓴다.** 우리 검출기는 임시표를
     # 자주 놓치거나 종류를 틀린다(실측: ♭ 를 ♮ 로 0.92 점). 어긋난 자리를 원본과
     # 대조한 7곳(day2sb-3 ♯A · now0918-10 ♭D · wish0906-4 ♭E · now0918-5 ♭D ·
@@ -484,7 +507,7 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         per_m[(id(b[0]), b[1])] = per_m.get((id(b[0]), b[1]), 0) + 1
     if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
             and all(b[3]["pos"][0] in plain for b in bad)):
-        for _, _, _, x, want in bad:
+        for _, _, _, x, want, _ in bad:
             x.pop("natural", None)
             x.pop("accidental", None)
             if want == 0:
@@ -508,7 +531,7 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         if msg not in sys_.setdefault("review", []):
             sys_["review"].append(msg)
     seen = set()
-    for sys_, mi, w, _, _ in bad:
+    for sys_, mi, w, _, _, _ in bad:
         stat.setdefault("accDetail", []).append(f"{sys_.get('system')}:{mi} {w}")
         if (id(sys_), mi) in seen:
             continue
