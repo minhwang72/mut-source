@@ -992,6 +992,9 @@ class Handler(BaseHTTPRequestHandler):
         if route.startswith("/api/"):
             self._json(404, {"error": "not found"})
             return
+        if route in ("/pay/success", "/pay/fail"):
+            self._pay_return(route)
+            return
         if route.startswith("/auth/"):
             rest = route[len("/auth/"):]
             p, _, tail = rest.partition("/")
@@ -1060,6 +1063,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._post_agree()
             elif route == "/api/profile":
                 self._post_profile()
+            elif route == "/api/pay/order":
+                self._post_pay_order()
             elif route == "/api/logout":
                 STATE["store"].revoke_auth(self._session())
                 self._json(200, {"ok": True})
@@ -1224,6 +1229,41 @@ class Handler(BaseHTTPRequestHandler):
         for c in getattr(self, "_cookies", ()):
             self.send_header("Set-Cookie", c)
         self.end_headers()
+
+    # ──────────────────────────────────── 결제 (토스페이먼츠 — server/pay.py)
+    def _post_pay_order(self) -> None:
+        import db
+        import pay
+        sid = self._session()
+        uid = STATE["store"].user_of(sid)
+        if not (db.configured() and pay.configured()):
+            self._json(503, {"error": "결제를 아직 받을 수 없습니다."})
+            return
+        if not uid:
+            self._json(401, {"error": "로그인 후 충전할 수 있습니다."})
+            return
+        d = self._body_json() or {}
+        order = pay.create_order(uid, str(d.get("pack") or ""))
+        if order is None:
+            self._json(400, {"error": "없는 상품입니다."})
+            return
+        self._json(200, order)
+
+    def _pay_return(self, route: str) -> None:
+        """토스 결제창에서 돌아오는 자리. 승인하고 계정 화면으로 보낸다."""
+        import pay
+        sid = self._session()
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        g = lambda k: (q.get(k) or [""])[0]                 # noqa: E731
+        if route == "/pay/fail" or not pay.configured():
+            if g("orderId"):
+                pay.fail(g("orderId"))
+            msg = g("message") or "결제가 취소됐습니다."
+            self._redirect_to("/account?pay=" + urllib.parse.quote("실패: " + msg[:100]))
+            return
+        ok, msg = pay.confirm(STATE["store"].user_of(sid), g("paymentKey"),
+                              g("orderId"), g("amount"))
+        self._redirect_to("/account?pay=" + urllib.parse.quote(("" if ok else "실패: ") + msg))
 
     def _post_profile(self) -> None:
         try:

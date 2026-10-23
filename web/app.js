@@ -84,7 +84,7 @@ const BIZ = {
   tel: "0502-6681-5019",         // 안심번호 — 개인 휴대번호를 사이트에 노출하지 않는다
   mail: "zxcyui6181@naver.com",
   host: "자체 서버 (monsil)",
-  pg: "",                        // 결제대행사 — 심사 통과 후 확정되면 채운다
+  pg: "토스페이먼츠(주)",          // 결제대행사
   updated: "2026-09-18",
 };/** 크레딧 팩. 장당 단가가 내려가게 둔다. */
 const PACKS = [
@@ -285,8 +285,7 @@ function openPay(pack) {
   $("pay-name").textContent = pack.name;
   $("pay-credits").textContent = `${pack.credits}개`;
   $("pay-amount").textContent = won(pack.won);
-  $("pay-note").textContent =
-    "결제 수단이 아직 연결되어 있지 않습니다. 지금은 화면 흐름만 확인할 수 있습니다.";
+  $("pay-note").textContent = "결제하기를 누르면 토스페이먼츠 결제창이 열립니다.";
   $("pay").hidden = false;
 }
 
@@ -325,14 +324,39 @@ function initPay() {
   $("pay-close").addEventListener("click", close);
   $("pay").addEventListener("click", (e) => { if (e.target === $("pay")) close(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
-  $("pay-go").addEventListener("click", () => {
-    // **여기서 결제하는 척하지 않는다.** 크레딧을 늘리거나 내역을 만들면
-    // 화면과 서버 장부가 어긋나고, 산 적 없는 기록이 남는다.
-    $("pay-note").textContent =
-      "결제 연동(포트원·카카오페이)과 로그인이 붙으면 여기서 결제창이 열립니다.";
-    $("pay-go").disabled = true;
-    setTimeout(() => { $("pay-go").disabled = false; }, 1200);
+  $("pay-go").addEventListener("click", async () => {
+    // **금액은 서버가 정한다.** 화면은 상품 id 만 보내고, 크레딧은 토스 승인이
+    // 끝난 뒤 서버(/pay/success)가 장부에 넣는다 — 여기서 늘리지 않는다.
+    const go = $("pay-go"), note = $("pay-note");
+    go.disabled = true;
+    try {
+      const o = await request("/api/pay/order", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: state.pack.id }),
+      });
+      const toss = window.TossPayments(o.clientKey);
+      await toss.payment({ customerKey: o.customerKey }).requestPayment({
+        method: "CARD",
+        amount: { currency: "KRW", value: o.amount },
+        orderId: o.orderId,
+        orderName: o.orderName,
+        successUrl: `${location.origin}/pay/success`,
+        failUrl: `${location.origin}/pay/fail`,
+      });
+    } catch (e) {
+      // 결제창을 닫으면 USER_CANCEL 로 여기 온다 — 주문은 서버에 'ready' 로 남는다
+      note.textContent = e.code === "USER_CANCEL" ? "결제를 취소했습니다."
+        : (e.message || "결제창을 열지 못했습니다.");
+    } finally {
+      go.disabled = false;
+    }
   });
+  // 토스 결제창에서 돌아오면 서버가 결과를 주소에 실어 보낸다
+  const r = new URLSearchParams(location.search).get("pay");
+  if (r) {
+    history.replaceState({}, "", location.pathname);
+    setTimeout(() => alert(r), 300);
+  }
 }
 
 /** 판독 결과의 모든 코드를 (단, 코드) 순서로 평탄화 */
