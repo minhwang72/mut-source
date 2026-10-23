@@ -963,8 +963,47 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _held(self) -> bool:
+        """
+        **판매 전 잠금.** MUTE_ALLOW_IPS(쉼표로 구분)가 있으면 그 주소와 사설망에서만
+        연다. 나머지는 '준비 중' 안내만 보낸다. 판매를 시작할 때 환경변수를 지우면 열린다.
+        """
+        allow = [a.strip() for a in (os.environ.get("MUTE_ALLOW_IPS") or "").split(",")
+                 if a.strip()]
+        if not allow:
+            return False
+        import ipaddress
+        # X-Forwarded-For 첫 값은 접속자가 써넣을 수 있다 — nginx 가 직접 채우는
+        # X-Real-IP($remote_addr)만 믿는다
+        ip = (self.headers.get("X-Real-IP") if STATE["origin"] else None) \
+            or self.client_address[0]
+        try:
+            a = ipaddress.ip_address(ip)
+            if a.is_private or a.is_loopback:
+                return False
+        except ValueError:
+            pass
+        if ip in allow:
+            return False
+        body = ("<!doctype html><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>mut — 준비 중</title>"
+                "<body style='font-family:sans-serif;display:grid;place-items:center;"
+                "min-height:90vh;color:#222'><div style='text-align:center'>"
+                "<h1 style='font-size:22px'>mut 은 지금 준비 중입니다</h1>"
+                "<p style='color:#666'>곧 다시 열겠습니다.</p></div>").encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     # ---------------------------------------------------------- 라우팅
     def do_GET(self) -> None:
+        if self._held():
+            return
         if not self._same_origin():
             self._json(403, {'error': '허용되지 않은 출처입니다.'})
             return
@@ -1040,6 +1079,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         route = self.path.split("?")[0]
+        if self._held():
+            self.close_connection = True
+            return
         if not self._same_origin():
             self._json(403, {"error": "허용되지 않은 출처입니다."})
             return
