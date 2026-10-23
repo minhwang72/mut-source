@@ -588,17 +588,20 @@ function enterKeyScreen() {
   const txt = (v) => typeof v === 'string' ? v : v.message || v.reason || JSON.stringify(v);
   const blocking = (gate?.blocking || gate?.issues || []).map(txt);
   const notes = (gate?.notes || []).map(txt);
-  const stuck = gate?.status !== 'ready';
+  const marked = gate?.status === 'marked';
+  const stuck = gate?.status !== 'ready' && !marked;
   if (q.warning || stuck || notes.length) {
     // **지원하지 않는 악보는 "확인이 필요합니다"로 뭉뚱그리지 않는다.**
     // 고치면 될 것처럼 들리면 사용자가 계속 시도하게 된다.
     const unsupported = (gate?.twoVoice ?? 0) >= 0.35;
-    const head = !stuck
+    const head = marked
+      ? '읽었습니다. 노란색 마디만 원본과 한 번 비교해 주세요 — 확인이 필요한 결과라 크레딧은 차감하지 않았습니다.'
+      : !stuck
       ? '읽었습니다. 아래는 확인하실 곳입니다.'
       : unsupported
         ? '이 악보는 아직 지원하지 않습니다. 크레딧은 차감되지 않았습니다.'
         : '원본 확인이 필요합니다. 저장 및 크레딧 차감은 보류됩니다.';
-    const lines = stuck ? blocking : notes;
+    const lines = stuck ? blocking : marked ? [] : notes;
     warn.textContent = [q.warning, head, ...lines.slice(0, 8)].filter(Boolean).join('\n');
     warn.style.whiteSpace = 'pre-line';
     warn.classList.toggle('soft', !stuck);
@@ -958,7 +961,7 @@ function wireConfirm() {
 
 /** 미검증 미리보기에 사선 표시를 얹는다. 통과한 결과는 그대로 둔다. */
 function markUnverified(canvas, ex) {
-  if (ex?.qualityGate?.status === 'ready') return;
+  if (['ready', 'marked'].includes(ex?.qualityGate?.status)) return;
   const g = canvas.getContext('2d');
   const step = Math.max(180, Math.round(canvas.width / 5));
   g.save();
@@ -1123,8 +1126,10 @@ function guardContent() {
 }
 
 function updateExportState() {
-  const ready = state.extraction?.qualityGate?.status === 'ready';
-  for (const id of ['dl-png', 'dl-pdf']) $(id).disabled = !ready || !state.rendered || state.exportBusy;
+  const status = state.extraction?.qualityGate?.status;
+  const ready = status === 'ready';
+  const usable = ready || status === 'marked';
+  for (const id of ['dl-png', 'dl-pdf']) $(id).disabled = !usable || !state.rendered || state.exportBusy;
   // 차감은 **판독**에서 이미 끝났다. 저장은 값을 치른 결과를 받아 가는
   // 것이므로 공짜다 — 저장에서 깎으면 미리보기를 화면에서 가져가는 쪽이
   // 이득이 되어 구조가 어긋난다.
@@ -1133,6 +1138,8 @@ function updateExportState() {
   // 지어낸 곳이 없다는 뜻이다. 약속을 한 줄로 유지한다.
   $('credit-notice').textContent = ready
     ? '이 판독에 크레딧 1개를 사용했습니다 · 키 변경과 저장은 몇 번이든 추가 차감 없음'
+    : status === 'marked'
+    ? '노란색 마디는 원본과 비교해 주세요 · 확인이 필요한 결과라 차감하지 않았습니다 · 저장 가능'
     : '확인이 필요한 결과라 차감하지 않았습니다 — 화면은 그대로 쓰실 수 있습니다.';
 }
 
@@ -1295,7 +1302,8 @@ async function refreshAccount() {
 }
 
 async function exportScore(format) {
-  if (state.exportBusy || !state.rendered || state.extraction?.qualityGate?.status !== 'ready') return;
+  if (state.exportBusy || !state.rendered
+      || !['ready', 'marked'].includes(state.extraction?.qualityGate?.status)) return;
   state.exportBusy = true;
   updateExportState();
   // Prevent changing the preview while its export is being prepared.

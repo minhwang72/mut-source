@@ -154,7 +154,8 @@ export function build(measures, fifths, opts = {}) {
       if (n.unresolved) throw new Error('미확정 음표를 쉼표로 바꾸어 출력할 수 없습니다');
       const dur = DUR[n.duration] ?? DUR.quarter;
       const d = n.dotted ? Math.floor(dur * 3 / 2) : dur;
-      x.push('   <note>');
+      // 확인 권장 마디는 노란색(짐작했거나 두 판독기가 갈린 곳)
+      x.push(m.flag ? '   <note color="#D99A00">' : '   <note>');
       // **화음.** 둘째 음부터 <chord/> 를 달면 같은 시각에 쌓여 그려지고
       // 박도 앞으로 가지 않는다. 콘티의 간주 스트립이 이 모양이다.
       if (n.chord) x.push('    <chord/>');

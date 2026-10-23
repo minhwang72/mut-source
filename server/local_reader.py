@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import os
 import subprocess
 import sys
@@ -465,6 +466,15 @@ def broken_beam_groups(struct: dict) -> int:
     return bad
 
 
+# 확인만 하면 되는 사유 — 마디는 그려졌고 어느 쪽인지 사람이 보면 된다
+SOFT = re.compile(r"^(박자를 맞추려고 음가 \d+군데를 짐작|단 \d+: 마디 \d+: "
+                  r"(두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독))")
+
+
+def _soft(msg: str) -> bool:
+    return bool(SOFT.match(msg))
+
+
 def quality_gate(extraction: dict, issues: list[str]) -> dict:
     """
     **박자 합으로 품질을 주장하지 않는다.** 브라우저가 실제로 쓰는 조립
@@ -588,7 +598,15 @@ def quality_gate(extraction: dict, issues: list[str]) -> dict:
         except Exception as e:                    # noqa: BLE001
             found.append(f"구조 검증 실패: {e}"[:160])
 
-    return {"status": "ready" if not found else "needs_review",
+    # **노란 마디로 내준다.** 막힌 이유가 '짐작'·'두 판독기 불일치'뿐이면 다시
+    # 그리기는 됐고 확인할 마디만 남았다. 그 마디를 노란색으로 그려 저장은
+    # 열어 주되, 돈은 받지 않는다(jobs 는 'ready' 일 때만 차감한다).
+    # 105장 실측: 완전 통과 29장 + 노란 마디로 내줄 수 있는 장 17장.
+    if found and all(_soft(f) for f in found):
+        status = "marked"
+    else:
+        status = "ready" if not found else "needs_review"
+    return {"status": status,
             # 화면은 둘을 나눠 보여 준다. issues 는 예전 이름이라 남긴다.
             "blocking": found[:40],
             "notes": notes[:40],

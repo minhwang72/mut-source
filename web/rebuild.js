@@ -76,6 +76,21 @@ export function splits(per, FULL_ = FULL) {
   return out;
 }
 
+/**
+ * **확인 권장 마디** — 짐작한 음표가 있거나 두 판독기가 갈린 마디(1부터 센 번호).
+ * 노란색으로 그려 사용자가 원본과 한 번 비교하게 한다(server quality_gate 'marked').
+ */
+const SOFT_REVIEW = /^마디 (\d+): (두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독)/;
+export function flaggedMeasures(sysd) {
+  const out = new Set();
+  for (const r of (sysd.review || [])) {
+    const m = SOFT_REVIEW.exec(r);
+    if (m) out.add(Number(m[1]));
+  }
+  for (const n of (sysd.notes || [])) if (n.guessed) out.add(n.measure);
+  return out;
+}
+
 /** 박자 검산. 반환: {ok, over:[...], under:[...], splits:[...]} */
 export function checkBeats(struct) {
   const full = fullOf(struct);
@@ -327,6 +342,7 @@ export function assemble(struct, geometry, chordsBySystem) {
     // 처음/끝에 붙인다.
     const markBy = {};
     for (const mk of (sysd.marks || [])) markBy[mk.measure] = mk;
+    const flagged = flaggedMeasures(sysd);
     buckets.forEach((notes0, mi) => {
       if (!notes0.length) unresolved.push({system: si, measure: mi + 1,
         reason: '읽은 음표·쉼표가 없어 원본 확인 필요'});
@@ -379,6 +395,7 @@ export function assemble(struct, geometry, chordsBySystem) {
       use.forEach((pc, pi) => {
         addBeams(pc);
         const m = { notes: pc };
+        if (flagged.has(mi + 1)) m.flag = true;
         if (mi === 0 && pi === 0) m.newSystem = true;
         // **단별 원조 조표(전조).** 구조 데이터가 주면 실어 둔다 —
         // 목표 조표로 옮기는 것은 redraw 가 한다(간격 차이를 더한다).
