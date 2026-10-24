@@ -264,3 +264,17 @@ def test_missed_modulation_splits_key_section():
 
 if __name__ == "__main__":
     test_missed_modulation_splits_key_section(); print("ok modulation")
+
+
+def test_measure_only_homr_read_blocks():
+    def q(d, m):
+        return {"measure": m, "duration": d, "dotted": False, "rest": False}
+    # 우리: 2마디 / homr: 가운데 온음표 마디가 하나 더 — 우리가 통째로 놓쳤다
+    s = {"beats": 4, "systems": [{"system": 0, "notes":
+         [q("half", 1), q("half", 1), q("half", 2), q("half", 2)]}]}
+    r = merge(s, [[["2", "2"], ["4"], ["2", "2"]]])
+    assert r.get("missing") == 1 and any("빠졌" in x for x in s["systems"][0]["review"])
+
+
+if __name__ == "__main__":
+    test_measure_only_homr_read_blocks(); print("ok missing")

@@ -18,11 +18,12 @@ ap.add_argument("--model", default="models/omr.pt")
 ap.add_argument("--name", required=True)
 ap.add_argument("--epochs", type=int, default=12)
 ap.add_argument("--lr0", type=float, default=0.002)
+ap.add_argument("--batch", type=int, default=16)
 a = ap.parse_args()
 
 m = YOLO(a.model)
 t = m.ckpt.get("train_args", {})
-m.train(data=a.data, epochs=a.epochs, imgsz=960, batch=16, device="mps",
+m.train(data=a.data, epochs=a.epochs, imgsz=960, batch=a.batch, device="mps",
         workers=6, project="runs_ultra", name=a.name, exist_ok=True,
         scale=t.get("scale", 0.25), translate=t.get("translate", 0.05),
         degrees=t.get("degrees", 1.0), shear=t.get("shear", 1.0),

@@ -108,7 +108,8 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
     seq_t = [m for sysm in homr for m in sysm]
     pit_t = [m for sysm in pitch for m in sysm] if pitch else None
     key_t = [m for sysm in hkey for m in sysm] if hkey else None
-    pairs, at = _align(seq_o, seq_t)   # 우리 마디 k → homr 토큰 목록 / homr 마디 번호
+    pairs, at, skipped = _align(seq_o, seq_t)   # 우리 마디 k → homr 토큰 / homr 마디 번호
+    _missing_measures(systems, ours_m, at, skipped, seq_t, stat)
     allchecks: list[list] = []
     for si, sys_ in enumerate(systems):
         notes = sys_.get("notes") or []
@@ -175,6 +176,29 @@ def _agreed_pickup(sys_: dict, full: float, stat: dict) -> None:
         if m0 not in pk:
             pk.append(m0)
             stat["pickup"] = stat.get("pickup", 0) + 1
+
+
+def _missing_measures(systems, ours_m, at, skipped, seq_t, stat) -> None:
+    """
+    **homr 가 읽은 음표 마디가 우리 판독에 통째로 없으면 막는다.**
+
+    두 판독이 나머지 마디를 똑같이 읽으면 '일치'로 통과하는데, 한쪽이 마디 하나를
+    통째로 놓친 건 비교 대상에서 빠져 버렸다(실측 wish0830-4: 줄 첫머리 온음표
+    마디 3개를 우리만 놓쳤는데 통과). 앞뒤 마디가 둘 다 짝지어진 자리에서 빠진
+    마디만 본다 — 우리가 아예 읽지 않은 단(손으로 그린 리듬 줄 등)은 앞뒤 짝이 없다.
+    """
+    back = {j: k for k, j in at.items()}
+    for j in skipped:
+        if not any(not t.startswith("r") for t in seq_t[j]):
+            continue
+        if (j - 1) not in back or (j + 1) not in back:
+            continue
+        si, mi = ours_m[back[j + 1]]
+        msg = "마디가 하나 빠졌을 수 있습니다 — 두 번째 판독기만 읽은 마디가 있습니다"
+        rv = systems[si].setdefault("review", [])
+        if msg not in rv:
+            rv.append(msg)
+            stat["missing"] = stat.get("missing", 0) + 1
 
 
 def _fifths(sys_: dict, struct: dict):
@@ -319,7 +343,7 @@ def _dot_pair(units, ours, theirs, i) -> bool:
 SIMILAR = 0.5
 
 
-def _align(a: list[list[str]], b: list[list[str]]) -> tuple[dict[int, list[str]], dict[int, int]]:
+def _align(a: list[list[str]], b: list[list[str]]) -> tuple[dict, dict, list[int]]:
     """
     우리 마디 목록 a 와 homr 마디 목록 b 를 정렬해 a 의 자리마다 짝 토큰을 준다.
 
@@ -379,7 +403,9 @@ def _align(a: list[list[str]], b: list[list[str]]) -> tuple[dict[int, list[str]]
             out[pi], out[pi + 1] = a[pi], a[pi + 1]
         elif how == "b2":
             out[pi] = a[pi]
-    return out, at
+    # homr 에만 있는 마디(우리가 통째로 놓친 마디 후보) — homr 마디 번호
+    skipped = [pj for pi, pj, how in path if how == "skip_b"]
+    return out, at, skipped
 
 
 def _alter(n: dict, fifths: int, acc: dict, key: dict) -> int:
