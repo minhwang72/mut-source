@@ -161,6 +161,7 @@ KEYSIG_ALLOW = 3.0
 # 화음 단에서 같은 기둥의 약한 머리를 구성음으로 받는 점수 바닥 — 진짜 가운데
 # 머리 0.43·0.44(set0802-3) / 멜로디 단 오검출 0.26(마커스 단7)
 CHORD_MEMBER_CONF = 0.35
+STACK_DY_EVAL = 0.8   # detstruct.STACK_DY 와 같은 값 — 이 안이면 그쪽이 한 칸으로 벌린다
 
 
 # **유채색 오검출을 색으로 거른다.**
@@ -410,7 +411,7 @@ def detect_guided(model, big, expect: list[int], conf_hi: float = 0.50,
                     if _stacked_with(a, [b], sp))
         if pairs >= 2:
             for c in heads:
-                if c in keep or c["conf"] < CHORD_MEMBER_CONF or _overlaps(c, keep, sp):
+                if c in keep or c["conf"] < CHORD_MEMBER_CONF:
                     continue
                 # 진짜 구성음은 기둥에 1~2px 로 맞춰 쌓인다. 반 칸 어긋난 '머리'는
                 # 마디선 옆 잡음이라 받으면 그 마디선이 기둥으로 지워진다(실측
@@ -420,8 +421,22 @@ def detect_guided(model, big, expect: list[int], conf_hi: float = 0.50,
                        for k in keep):
                     continue
                 col = [k for k in keep if _same_x(c, [k], sp)]
+                if _overlaps(c, [k for k in keep if k not in col], sp):
+                    continue
                 cy = c["y"] + c["h"] / 2
-                if col and all(abs(k["y"] + k["h"] / 2 - cy) >= sp * 0.85 for k in col):
+                dys = sorted(abs(k["y"] + k["h"] / 2 - cy) for k in col)
+                # **맞붙은 3도는 반 칸 남짓으로 잡힌다** — 바로 위(아래) 머리에 상자가
+                # 쏠려서다. 한쪽 이웃만 0.56~0.8칸이면 받고, 자리는 split_stacked 가
+                # 한 칸 간격으로 바로잡는다(실측 camp0814b-06 단1 x2225: A4 아래 F4
+                # 상자가 0.61칸 — 같은 머리 중복으로 버려졌다). 덧줄 C4 옆 잡음 상자가 0.50칸이라
+                # (camp0814b-06 단1 x1890 — 받으면 E4 가 생겼다) 하한은 0.56. 같은 머리 중복은
+                # 0.4칸 이내다(같은 자리 x1540: 0.22칸).
+                if col and (dys[0] >= sp * 0.85 or (
+                        sp * 0.56 <= dys[0] < sp * STACK_DY_EVAL
+                        # 머리 높이가 안 되는 조각은 빼다(set0802-3 단1 온음표 화음:
+                        # F4·C4 사이 높이 0.72칸 조각이 E4 로 들어왔다)
+                        and c["h"] >= sp * 0.85
+                        and all(d >= sp * 0.85 for d in dys[1:]))):
                     keep.append(c)
                     extra += 1
                     if c in dropped:

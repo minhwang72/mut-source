@@ -65,6 +65,12 @@ def test_split_stacked_third():
     e = {"x": 1400, "y": 774, "w": 23, "h": 20, "conf": 0.9}
     f = {"x": 1400, "y": 792.5, "w": 23, "h": 20, "conf": 0.5}
     assert split_stacked([c, d, e, f], 18.25) == 0
+    # set0802-3 단9 x1852: A4·F4 사이에 걸친 상자(0.63)보다 칸에 맞는 F4(0.36)가 기준
+    st9 = cv.Staff(0, 3494, 3567, [3494, 3513, 3531, 3549, 3567], [(y, y) for y in (3494, 3513, 3531, 3549, 3567)], 0, 2500)
+    g = {"x": 1840, "y": 3534, "w": 24, "h": 22, "conf": 0.63}
+    h = {"x": 1840, "y": 3548, "w": 24, "h": 16, "conf": 0.36}
+    assert split_stacked([g, h], 18.25, st9) == 1
+    assert staff_pos(g, st9) == "A4" and staff_pos(h, st9) == "F4"
 
 
 if __name__ == "__main__":
@@ -76,12 +82,19 @@ if __name__ == "__main__":
 def test_chord_member_follows_its_base():
     from detstruct import order_chords
     def n(x, chord=False, m=1):
-        return {"measure": m, "chord": chord, "rest": False,
+        return {"measure": m, "chord": chord, "rest": False, "duration": "quarter",
                 "head": {"x": x, "y": 0, "w": 10, "h": 8}}
     a, b, c = n(100, chord=True), n(102), n(150)
     assert order_chords([a, b, c]) == [b, a, c]          # 구성음이 앞에 왔다 → 뒤로
     d, e, f = n(100), n(101, chord=True), n(150)
     assert order_chords([d, e, f]) == [d, e, f]          # 이미 바르면 그대로
+    # camp0814b-06 단9: 구성음 둘이 바탕음 앞에 — 둘 다 그 뒤로
+    p, q, r, t = n(100), n(101, chord=True), n(160, chord=True), n(161, chord=True)
+    u = n(162)
+    assert order_chords([p, q, r, t, u]) == [p, q, u, r, t]
+    # 구성음은 바탕음 음가를 따른다
+    v, w = dict(n(300), duration="half"), dict(n(301, chord=True), duration="quarter")
+    assert order_chords([v, w])[1]["duration"] == "half"
 
 
 if __name__ == "__main__":

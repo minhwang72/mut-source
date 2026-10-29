@@ -401,8 +401,19 @@ STACK_DX = 0.25     # 같은 기둥 — 중심 가로 거리(오선간격 배수
 STACK_DY = 0.8      # 이보다 가까우면 2도 이하로 읽힌다
 
 
-def split_stacked(notes, spacing: float) -> int:
-    """같은 기둥에 붙어 쌓여 2도로 읽힐 머리 쌍을 3도로 벌린다. 고친 수."""
+def split_stacked(notes, spacing: float, st=None) -> int:
+    """같은 기둥에 붙어 쌓여 2도로 읽힐 머리 쌍을 3도로 벌린다. 고친 수.
+
+    기준은 점수가 높은 머리 — 단, 그 머리가 칸·줄 사이에 걸쳐 있고(반 칸 단위
+    격자에서 0.35 넘게 벗어남) 상대는 격자에 맞으면 상대가 기준이다(실측
+    set0802-3 단9 x1852: A4·F4 사이에 걸친 상자 0.63 이 기준이 되어 F4 를
+    E4 로 내렸다). st 를 모르면 점수만 본다.
+    """
+    def off(b):
+        if st is None:
+            return 0.0
+        k = (st.bottom - (b["y"] + b["h"] / 2.0)) / ((st.bottom - st.top) / 8.0)
+        return abs(k - round(k))
     hs = sorted(notes, key=lambda b: b["y"] + b["h"] / 2.0)
     n = 0
     for i, a in enumerate(hs):
@@ -411,7 +422,11 @@ def split_stacked(notes, spacing: float) -> int:
             if abs(a["x"] + a["w"] / 2.0 - b["x"] - b["w"] / 2.0) >= spacing * STACK_DX \
                     or not 0 < by - ay < spacing * STACK_DY:
                 continue
-            if a.get("conf", 0) >= b.get("conf", 0):     # 위가 기준 → 아래를 내린다
+            top = a.get("conf", 0) >= b.get("conf", 0)
+            hi, lo = (a, b) if top else (b, a)
+            if off(hi) > 0.35 and off(lo) < 0.25:
+                top = not top
+            if top:                                      # 위가 기준 → 아래를 내린다
                 b["y"] = ay + spacing - b["h"] / 2.0
             else:
                 a["y"] = by - spacing - a["h"] / 2.0
@@ -516,25 +531,37 @@ def order_chords(notes: list[dict]) -> list[dict]:
     구성음이 바탕음 **앞**에 오는 일이 있었다(실측 wish0906-2 단1·단7: 마디 첫
     음이 구성음 — 앞 마디 끝 음에 붙거나 따로 세어져 4.5박). 구성음 머리가
     뒤 음과 더 가까우면 그 뒤로 옮긴다.
-    """
-    out = list(notes)
 
+    **구성음마다 가장 가까운 바탕음 뒤로 모은다.** 바로 뒤 음과 한 칸만 바꾸면
+    구성음이 둘 연달아 앞에 올 때 하나가 앞 화음에 남는다(실측 camp0814b-06
+    단9: F4·A4 다음에 바탕음 C4 — F4 가 앞 16분 화음에 붙어 출력이 틀렸다).
+    """
     def cx(n):
         h = n.get("head")
         return h["x"] + h["w"] / 2.0 if h else None
-    i = 0
-    while i < len(out):
-        n = out[i]
-        if n.get("chord") and i + 1 < len(out) and not out[i + 1].get("chord") \
-                and out[i + 1]["measure"] == n["measure"]:
-            prev = out[i - 1] if i > 0 and out[i - 1]["measure"] == n["measure"] else None
-            a, b = cx(n), cx(out[i + 1])
-            p = cx(prev) if prev is not None else None
-            if a is not None and b is not None and (p is None or abs(a - b) < abs(a - p)):
-                out[i], out[i + 1] = out[i + 1], n
-                i += 2
-                continue
-        i += 1
+    leads = [i for i, n in enumerate(notes) if not n.get("chord") and cx(n) is not None]
+    owner: dict[int, int] = {}
+    for i, n in enumerate(notes):
+        same = [j for j in leads if notes[j]["measure"] == n["measure"]]
+        if n.get("chord") and cx(n) is not None and same:
+            # 앞 바탕음과 같은 기둥(머리 폭 안)이면 그대로 — 기둥 반대편에 적은
+            # 2도 구성음을 빠른 뒤 음에 빼앗기지 않게
+            prev = [j for j in same if j < i]
+            if prev and abs(cx(notes[prev[-1]]) - cx(n)) < n["head"]["w"]:
+                owner[i] = prev[-1]
+            else:
+                owner[i] = min(same, key=lambda j: abs(cx(notes[j]) - cx(n)))
+    # **구성음은 바탕음 음가를 따른다** — 한 성부의 화음은 길이가 하나다. 속 빈
+    # 구성음이 찬 머리로 검출되면 2분음표 화음에 4분음표가 섞여 그려졌다(실측
+    # camp0814b-06 단1 마디4: 덧줄 C4 가 notehead_filled 0.48)
+    out = []
+    for i, n in enumerate(notes):
+        if i not in owner:
+            out.append(n)
+            for k in sorted(owner):
+                if owner[k] == i:
+                    notes[k]["duration"], notes[k]["dotted"] = n["duration"], n.get("dotted", False)
+                    out.append(notes[k])
     return out
 
 
@@ -682,7 +709,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                                           spacing, gray, cur, prov)
             n_promoted += np_
         got_chords = mark_chords(got, spacing)
-        split_stacked(got, spacing)
+        split_stacked(got, spacing, st if len(st.lines) == 5 else None)
         # **마디가 말이 안 되게 크면 마디선을 놓친 것이다.** 엄격한 기준은
         # 빽빽한 단에서 마디선을 통째로 잃는다(실측 now0918-1 단4: 단 전체가
         # 17박 한 마디). 느슨한 기준은 기둥까지 받으므로 **여기서만** 쓴다 —
