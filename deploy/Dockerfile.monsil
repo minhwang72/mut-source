@@ -1,5 +1,8 @@
 # monsil 배포용 얇은 층 — `~/mute/Dockerfile` 로 복사해 `~/mute-deploy.sh` 가 빌드한다.
 FROM mute:base
+# base 의 node 를 최신 22.x 로 덮어쓴다(2026-10 Node2Shell 패치). base 를 다시 굽지 않고
+# 보안 패치만 받기 위함 — 빌드 전에 `docker pull node:22-slim` 으로 최신을 받아 둔다.
+COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
 # 장부용 드라이버. 순수 파이썬이라 빌드가 필요 없다.
 RUN pip install --no-cache-dir PyMySQL==1.1.2
 # **두 번째 판독기 homr** — 교차 검증용(tools/crosscheck.py).

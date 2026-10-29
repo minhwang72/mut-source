@@ -391,6 +391,34 @@ def mark_chords(notes, spacing: float) -> int:
     return n
 
 
+# **한 기둥에 곧게 쌓인 두 머리는 3도 이상 떨어진다.** 2도는 머리를 기둥
+# 양옆으로 엇갈려 적기 때문이다. 그런데 맞닿은 3도는 약한 쪽 검출 상자가
+# 센 쪽으로 쏠려 반 칸(2도)으로 읽힌다 — 실측 set0802-3 단0: F4 머리 상자가
+# A4 쪽으로 5px 올라가 G4 가 됐고, 같은 곡 5장이 음높이 불일치로 막혔다
+# (바깥 모서리도 같이 쏠려 잉크 범위로는 못 고친다). 그래서 점수가 높은
+# 머리를 기준으로 약한 머리를 정확히 한 칸 떨어진 자리에 다시 놓는다.
+STACK_DX = 0.25     # 같은 기둥 — 중심 가로 거리(오선간격 배수)
+STACK_DY = 0.8      # 이보다 가까우면 2도 이하로 읽힌다
+
+
+def split_stacked(notes, spacing: float) -> int:
+    """같은 기둥에 붙어 쌓여 2도로 읽힐 머리 쌍을 3도로 벌린다. 고친 수."""
+    hs = sorted(notes, key=lambda b: b["y"] + b["h"] / 2.0)
+    n = 0
+    for i, a in enumerate(hs):
+        for b in hs[i + 1:]:
+            ay, by = a["y"] + a["h"] / 2.0, b["y"] + b["h"] / 2.0
+            if abs(a["x"] + a["w"] / 2.0 - b["x"] - b["w"] / 2.0) >= spacing * STACK_DX \
+                    or not 0 < by - ay < spacing * STACK_DY:
+                continue
+            if a.get("conf", 0) >= b.get("conf", 0):     # 위가 기준 → 아래를 내린다
+                b["y"] = ay + spacing - b["h"] / 2.0
+            else:
+                a["y"] = by - spacing - a["h"] / 2.0
+            n += 1
+    return n
+
+
 # 박자 검산으로 되살릴 수 있는 머리의 최소 점수. 이보다 낮으면 잉크가 아니라
 # 잡음일 확률이 높다 — 실측한 진짜 누락 머리는 0.059 였다.
 SPARE_MIN_CONF = 0.03
@@ -654,6 +682,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                                           spacing, gray, cur, prov)
             n_promoted += np_
         got_chords = mark_chords(got, spacing)
+        split_stacked(got, spacing)
         # **마디가 말이 안 되게 크면 마디선을 놓친 것이다.** 엄격한 기준은
         # 빽빽한 단에서 마디선을 통째로 잃는다(실측 now0918-1 단4: 단 전체가
         # 17박 한 마디). 느슨한 기준은 기둥까지 받으므로 **여기서만** 쓴다 —

@@ -424,18 +424,26 @@ def _alter(n: dict, fifths: int, acc: dict, key: dict) -> int:
     return alt
 
 
-def _compare(checks, fifths: int) -> tuple[int, list, list, set]:
+def _step(p: str) -> int:
+    """'F#4' → 오선 자리 번호(C0 = 0)."""
+    return "CDEFGAB".index(p[0]) + 7 * int(p.lstrip("ABCDEFG#b"))
+
+
+def _compare(checks, fifths: int) -> tuple[int, list, list, set, bool]:
     """조표 fifths 로 읽었을 때 (맞은 음 수, 임시표가 다른 음, 자리가 다른 음,
     임시표 없이 맞은 음이름)."""
-    agree, acc_bad, pos_bad = 0, [], []
+    agree, acc_bad, pos_bad, shifted = 0, [], [], []
     plain: set[str] = set()                           # 임시표 없이 맞은 음이름
     key = {"tie": None}
     for mi, got, theirs, hkey in checks:
         acc: dict = {}
+        n_pos = len(pos_bad)
+        offs, seen = set(), 0                         # 이 마디의 자리 차이(단음만)
         for u, t in zip(_units(got), theirs):
             if u[0].get("rest") or t == "r" or any("pos" not in x for x in u):
                 key["tie"] = None
                 continue
+            seen += 1
             # 화음이면 homr 는 구성음 하나만 준다 — 같은 자리의 구성음과 맞춘다
             tie, alts = key["tie"], []
             for x in u:
@@ -446,13 +454,27 @@ def _compare(checks, fifths: int) -> tuple[int, list, list, set]:
             want = t.count("#") - t[1:].count("b")
             if not hit:
                 pos_bad.append((mi, f"{u[0]['pos']}/{t}"))
+                offs.add(_step(base) - _step(u[0]["pos"]) if len(u) == 1 else None)
             elif hit[0][1] == want:
                 agree += 1
                 if not (hit[0][0].get("natural") or hit[0][0].get("accidental") is not None):
                     plain.add(base[0])
             else:
                 acc_bad.append((mi, f"{base}{hit[0][1]:+d}/{t}", hit[0][0], want, hkey))
-    return agree, acc_bad, pos_bad, plain
+        if seen >= 3 and len(pos_bad) - n_pos == seen and len(offs) == 1 and None not in offs:
+            shifted.append(n_pos)
+    # **homr 가 한 마디를 통째로 같은 칸수만큼 밀어 읽은 것은 막지 않는다.**
+    # 우리 음높이는 단 전체의 오선에서 재므로 한 마디만 밀릴 수 없다. 원본과
+    # 대조한 마디(wish0920-3 · wish0906-6 · wish0906-1 · wish0920-1)는 전부
+    # homr 가 틀렸다 — 흐린 오선이나 도돌이표 옆에서 homr 가 줄을 잘못 짚었다.
+    # 같은 단의 다른 마디는 맞아야 한다(단 전체가 어긋나면 어느 쪽인지 모른다).
+    # 그런 단은 homr 가 줄을 잘못 짚은 단이라 그 단의 homr 임시표도 믿지 않는다(호출 쪽).
+    if agree:
+        for n_pos in reversed(shifted):
+            mi = pos_bad[n_pos][0]
+            while n_pos < len(pos_bad) and pos_bad[n_pos][0] == mi:
+                pos_bad.pop(n_pos)
+    return agree, acc_bad, pos_bad, plain, bool(agree and shifted)
 
 
 def _fifths_of(group: list[dict], ours: int) -> int:
@@ -478,12 +500,15 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         return
 
     plain: set[str] = set()
+    shifted: set[int] = set()                         # homr 가 마디를 통째로 밀어 읽은 단
 
     def run(f):
         agree, pos, bad = 0, [], []
         plain.clear()
         for sys_, cs in zip(group, checks):
-            a, b, p, pl = _compare(cs, f)
+            a, b, p, pl, sh = _compare(cs, f)
+            if sh:
+                shifted.add(id(sys_))
             agree += a
             pos += [(sys_, mi, w) for mi, w in p]
             bad += [(sys_,) + b_ for b_ in b]
@@ -532,7 +557,10 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     for b in bad:
         per_m[(id(b[0]), b[1])] = per_m.get((id(b[0]), b[1]), 0) + 1
     if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
-            and all(b[3]["pos"][0] in plain for b in bad)):
+            and all(b[3]["pos"][0] in plain for b in bad)
+            # 실측 wish0920-3 단3: 마디 1을 3도 밀어 읽은 homr 가 마디 2의 F♯ 를
+            # F♮ 로 읽었고, 그걸 받아 틀린 음이 든 채 통과할 뻔했다
+            and not any(id(b[0]) in shifted for b in bad)):
         for _, _, _, x, want, _ in bad:
             x.pop("natural", None)
             x.pop("accidental", None)

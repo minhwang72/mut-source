@@ -158,6 +158,9 @@ if __name__ == "__main__":
 SLASH_RATIO = 0.4
 # 음자리표 뒤 조표가 차지하는 폭 (오선 간격 배수). ♭·♯ 네 개까지 덮는다.
 KEYSIG_ALLOW = 3.0
+# 화음 단에서 같은 기둥의 약한 머리를 구성음으로 받는 점수 바닥 — 진짜 가운데
+# 머리 0.43·0.44(set0802-3) / 멜로디 단 오검출 0.26(마커스 단7)
+CHORD_MEMBER_CONF = 0.35
 
 
 # **유채색 오검출을 색으로 거른다.**
@@ -396,6 +399,33 @@ def detect_guided(model, big, expect: list[int], conf_hi: float = 0.50,
                 # 개수가 찼거나 기대를 모르는 경우 — 버리되 남겨 둔다
                 if not _same_x(c, keep, sp):
                     dropped.append(c)
+        # **화음 단에서는 같은 기둥의 약한 머리도 받는다.** 위의 '같은 x 금지'는
+        # 멜로디 단의 중복을 막는 규칙인데, 3음 화음의 가운데 머리는 위아래
+        # 머리에 끼여 점수가 0.4대로 떨어져 늘 여기서 버려졌다(실측
+        # set0802-3 단0 x1864·2077: F4 0.43 · G4 0.44 — 같은 곡 5장이 음높이
+        # 불일치로 막혔다). 그래서 받은 머리끼리 화음이 두 쌍 이상 쌓인 단에서만,
+        # 같은 기둥 머리들과 한 칸 가까이(3도 이상) 떨어진 후보를 구성음으로 받는다.
+        # 마커스 단7 오검출(0.26)은 점수 바닥 CHORD_MEMBER_CONF 아래다.
+        pairs = sum(1 for i, a in enumerate(keep) for b in keep[i + 1:]
+                    if _stacked_with(a, [b], sp))
+        if pairs >= 2:
+            for c in heads:
+                if c in keep or c["conf"] < CHORD_MEMBER_CONF or _overlaps(c, keep, sp):
+                    continue
+                # 진짜 구성음은 기둥에 1~2px 로 맞춰 쌓인다. 반 칸 어긋난 '머리'는
+                # 마디선 옆 잡음이라 받으면 그 마디선이 기둥으로 지워진다(실측
+                # set0816-4 단5: 마디선 두 개를 잃고 6.75박 마디가 생겼다)
+                cx = c["x"] + c["w"] / 2
+                if any(_same_x(c, [k], sp) and abs(k["x"] + k["w"] / 2 - cx) >= sp * 0.25
+                       for k in keep):
+                    continue
+                col = [k for k in keep if _same_x(c, [k], sp)]
+                cy = c["y"] + c["h"] / 2
+                if col and all(abs(k["y"] + k["h"] / 2 - cy) >= sp * 0.85 for k in col):
+                    keep.append(c)
+                    extra += 1
+                    if c in dropped:
+                        dropped.remove(c)
         want_r = expect_rests[si] if expect_rests and si < len(expect_rests) else None
         kept_r, extra_r = [], 0
         for c in rests:

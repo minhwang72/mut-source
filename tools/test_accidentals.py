@@ -50,9 +50,26 @@ def test_staff_pos():
     assert staff_pos({"x": 0, "y": 141, "h": 8}, st) == "D4"      # 아래 칸
 
 
+def test_split_stacked_third():
+    from detstruct import split_stacked
+    # 실측 set0802-3 단0 x1218: A4(784, 0.82) 아래 F4 상자가 796 으로 쏠려 G4 로 읽혔다
+    st = cv.Staff(0, 739, 812, [739, 757, 774, 793, 812], [(y, y) for y in (739, 757, 774, 793, 812)], 0, 2500)
+    a = {"x": 1220, "y": 774, "w": 23, "h": 20, "conf": 0.82}
+    b = {"x": 1219, "y": 784.5, "w": 24, "h": 23, "conf": 0.63}
+    assert staff_pos(b, st) == "G4"
+    assert split_stacked([b, a], 18.25) == 1
+    assert staff_pos(a, st) == "A4" and staff_pos(b, st) == "F4"
+    # 기둥 양옆으로 엇갈린 진짜 2도, 이미 한 칸 떨어진 3도는 그대로
+    c = {"x": 1300, "y": 774, "w": 23, "h": 20, "conf": 0.9}
+    d = {"x": 1324, "y": 783, "w": 23, "h": 20, "conf": 0.5}
+    e = {"x": 1400, "y": 774, "w": 23, "h": 20, "conf": 0.9}
+    f = {"x": 1400, "y": 792.5, "w": 23, "h": 20, "conf": 0.5}
+    assert split_stacked([c, d, e, f], 18.25) == 0
+
+
 if __name__ == "__main__":
     test_links_flat_and_natural(); test_courtesy_key_at_end_is_ignored()
-    test_mid_system_key_cluster_blocks(); test_staff_pos()
+    test_mid_system_key_cluster_blocks(); test_staff_pos(); test_split_stacked_third()
     print("ok")
 
 

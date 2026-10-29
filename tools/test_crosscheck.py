@@ -278,3 +278,39 @@ def test_measure_only_homr_read_blocks():
 
 if __name__ == "__main__":
     test_measure_only_homr_read_blocks(); print("ok missing")
+
+
+def test_homr_shifted_measure_not_blocked():
+    def q(pos, m):
+        return {"measure": m, "duration": "quarter", "dotted": False, "rest": False, "pos": pos}
+    # wish0920-3 단2: homr 가 마디 1만 통째로 3도 위로 읽었다(마디 2는 같다) — 막지 않는다
+    def run(p1):
+        s = {"beats": 4, "sourceFifths": 0, "systems": [{"system": 0, "srcFifths": 0, "notes":
+             [q(p, 1) for p in ("G4", "G4", "F4", "G4")] + [q(p, 2) for p in ("A4", "B4", "C5", "B4")]}]}
+        merge(s, {"dur": [[["1"] * 4, ["1"] * 4]], "pitch": [[p1, ["A4", "B4", "C5", "B4"]]], "key": [[0, 0]]})
+        return s["systems"][0].get("review") or []
+    assert not run(["B4", "B4", "A4", "B4"])
+    # 밀린 폭이 제각각이면(우리 머리 쪽 문제일 수 있다) 막는다
+    assert run(["B4", "A4", "A4", "B4"])
+
+
+if __name__ == "__main__":
+    test_homr_shifted_measure_not_blocked(); print("ok shift")
+
+
+def test_shifted_system_keeps_our_accidentals():
+    def q(pos, m):
+        return {"measure": m, "duration": "quarter", "dotted": False, "rest": False, "pos": pos}
+    # wish0920-3 단3(G장조): homr 가 마디 1을 3도 밀어 읽고 마디 2의 F♯ 도 F♮ 로 읽었다
+    ms = [("G4", "G4", "F4", "G4"), ("F4", "G4", "A4", "B4"), ("F4", "G4", "A4", "G4")]
+    s = {"beats": 4, "sourceFifths": 1, "systems": [{"system": 0, "srcFifths": 1, "notes":
+         [q(p, i + 1) for i, m in enumerate(ms) for p in m]}]}
+    merge(s, {"dur": [[["1"] * 4] * 3], "key": [[1, 1, 1]], "pitch": [[
+        ["B4", "B4", "A4", "B4"], ["F4", "G4", "A4", "B4"], ["F#4", "G4", "A4", "G4"]]]})
+    notes = s["systems"][0]["notes"]
+    assert not any(n.get("natural") or n.get("homrAcc") for n in notes)
+    assert any("임시표" in r for r in s["systems"][0]["review"])
+
+
+if __name__ == "__main__":
+    test_shifted_system_keeps_our_accidentals(); print("ok shift-acc")
