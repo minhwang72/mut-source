@@ -984,7 +984,26 @@ def find_staves_best(img) -> tuple[np.ndarray, list]:
         st = find_staves(ink)
         if best is None or len(st) > len(best[1]):
             best = (ink, st)
-    return best if best else (binarize(img), [])
+    if not best:
+        return binarize(img), []
+    # **옅은 회색 오선.** 화면 캡처를 줄인 악보는 오선이 회색 155~220 이라 두
+    # 이진화가 다 놓치고, 위쪽 세트리스트 표의 검은 가로줄만 '오선'으로 남는다
+    # — 간격 38px 로 재서 확대를 안 하고 음표를 하나도 못 읽었다(실측
+    # wish0809-1 · wish0823-1 · wish0830-7/8 · wish0906-5 · day2sb-6). 밝기 230
+    # 미만을 잉크로 다시 찾아 **단이 더 많고 간격이 1.5배 넘게 다를 때만**
+    # 쓴다 — 105장 중 이 6장 말고는 조건에 걸리지 않는다.
+    ink, st = best
+    faint = np.asarray(img.convert("L")) < FAINT_INK
+    fs = find_staves(faint)
+    if len(fs) > len(st):
+        a, b = (median_spacing(st) if st else 0.0), median_spacing(fs)
+        if not a or a > b * 1.5 or a < b / 1.5:
+            return faint, fs
+    return best
+
+
+# 옅은 오선용 잉크 문턱(회색 밝기) — 실측 오선 줄 155~220
+FAINT_INK = 230
 
 
 # 가사 띠 높이의 **안전망** (오선 간격 배수). 실제 범위는 아래 덩어리 선택이
