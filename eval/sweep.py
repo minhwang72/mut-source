@@ -32,7 +32,8 @@ for name in PAGES:
         ex = serve.read_sheet(open(f"악보샘플/이미지/{name}.png", "rb").read(), None)
         g = ex["qualityGate"]
         st = ex.get("struct") or {}
-        json.dump({"struct": st, "gate": g, "cross": ex.get("crossCheck")},
+        json.dump({"struct": st, "gate": g, "cross": ex.get("crossCheck"),
+                   "chordCheck": ex.get("chordCheck")},
                   open(f"{SDIR}/{name}.json", "w"),
                   ensure_ascii=False)
         blk = list(g.get("blocking") or [])

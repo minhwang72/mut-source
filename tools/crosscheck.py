@@ -164,7 +164,7 @@ def _adopt_ties(systems, ours_m, at, seq_t, tie_t, stat) -> None:
     같을 때만. 우리 곡선 검출기는 16분→8분 같은 짧은 붙임줄을 거의 못 본다(실측
     camp0814a-3 · day2conti-2: 점수 0.08 이하라 문턱을 낮춰도 못 받는다). 놓치면
     이어 부를 음이 끊어 부르는 두 음으로 나가는데, 과금 장 26장 중 다수가 그랬다.
-    다음 음은 다음 마디·다음 단이어도 된다. 화음은 건드리지 않는다.
+    다음 음은 다음 마디·다음 단이어도 된다. 화음은 구성음 자리가 다 같을 때만.
 
     homr 도 없는 곡선을 가끔 지어낸다(실측 wish0823-4 41마디 끝 G·G). 원본 잉크로
     곡선을 확인해 봤지만 진짜 붙임줄 3개를 버리고 가짜 1개를 막아 손해라 뺐다
@@ -179,11 +179,13 @@ def _adopt_ties(systems, ours_m, at, seq_t, tie_t, stat) -> None:
         seq += [(u, ok and tie_t[j][i]) for i, u in enumerate(units)]
     for (u, t), (v, _) in zip(seq, seq[1:]):
         a, b = u[0], v[0]
-        if (t and not a.get("tie") and len(u) == 1 and len(v) == 1
-                and not a.get("rest") and not b.get("rest")
-                and a.get("pos") and a.get("pos") == b.get("pos")):
-            a["tie"] = True
-            a["homrTie"] = True
+        pu = sorted(x.get("pos") or "" for x in u)
+        # 화음이면 구성음 자리가 전부 같을 때만 — 화음째 붙는다(실측 wish0906-3 단8)
+        if (t and not a.get("tie") and not a.get("rest") and not b.get("rest")
+                and all(pu) and pu == sorted(x.get("pos") or "" for x in v)):
+            for x in u:
+                x["tie"] = True
+                x["homrTie"] = True
             stat["tiesAdopted"] = stat.get("tiesAdopted", 0) + 1
 
 

@@ -333,3 +333,19 @@ def test_homr_ties_adopted_across_measure():
 
 if __name__ == "__main__":
     test_homr_ties_adopted_across_measure(); print("ok ties")
+
+
+def test_homr_chord_tie():
+    def q(pos, m, chord=False):
+        return {"measure": m, "duration": "whole", "dotted": False, "rest": False, "pos": pos,
+                "chord": chord}
+    # wish0906-3 단8: E5+C5 화음이 다음 마디 같은 화음으로 붙는다 — 구성음 모두 tie
+    s = {"beats": 4, "sourceFifths": 0, "systems": [{"system": 0, "srcFifths": 0, "notes":
+         [q("E5", 1), q("C5", 1, True), q("E5", 2), q("C5", 2, True)]}]}
+    merge(s, {"dur": [[["4"], ["4"]]], "key": [[0, 0]], "pitch": [[["E5"], ["E5"]]],
+              "tie": [[[True], [False]]]})
+    assert [n.get("tie", False) for n in s["systems"][0]["notes"]] == [True, True, False, False]
+
+
+if __name__ == "__main__":
+    test_homr_chord_tie(); print("ok chord tie")

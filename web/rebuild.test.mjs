@@ -45,3 +45,20 @@ console.log('ok');
   assert.strictEqual(got[3][0].text, 'X3');
   assert.throws(() => chordsByStaff(systems, ['X0']));
 }
+
+// 화음 붙임줄: 앞 화음에서 시작한 음높이마다 다음 화음 같은 음높이가 끝(wish0906-3 단8)
+{
+  const h = (x, cy) => ({ x, y: cy - 3, w: 8, h: 6 });
+  const n = (measure, x, cy, chord, tie) => ({ measure, duration: 'whole', dotted: false,
+    rest: false, tie, chord, head: h(x, cy) });
+  const st = { beats: 4, sourceFifths: 0, systems: [{ system: 0, measures: 2, notes: [
+    n(1, 20, 115, false, true), n(1, 20, 105, true, true),     // C5+E5 ~
+    n(2, 80, 115, false, false), n(2, 80, 105, true, false),   // C5+E5
+  ] }] };
+  const geo = { systems: [{ staffTop: TOP, staffBottom: BOT, spacing: SP, left: 0, right: 200,
+    lineSpans: [], bars: [60] }], heads: [] };
+  const { measures: ms } = assemble(st, geo, {});
+  const [a, b] = ms.map((m) => m.notes);
+  assert.deepStrictEqual(a.map((x) => [x.pitch, x.tie, x.tie_stop]), [['C5', true, false], ['E5', true, false]]);
+  assert.deepStrictEqual(b.map((x) => [x.pitch, x.tie_stop]), [['C5', true], ['E5', true]]);
+}

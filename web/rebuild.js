@@ -209,7 +209,16 @@ export function assemble(struct, geometry, chordsBySystem) {
   // **붙임줄은 단 경계에서 끊기지 않는다.** 단마다 초기화하면 단의 마지막
   // 음에서 시작한 붙임줄이 짝 없는 `tie start` 로 남아 MusicXML 이 깨진다.
   // 음높이 쪽(`pitchState.tie`)은 이미 단을 넘어 이어지고 있었다.
-  let prevTie = false;
+  // **화음 붙임줄은 음높이로 짝짓는다.** 바로 앞 음표만 보면 붙임줄을 시작한
+  // 화음 바탕음 다음의 **구성음**이 끝으로 잡히고, 다음 화음의 구성음은 끝을
+  // 못 받는다(실측 wish0906-3 단8: E5+C5 화음이 다음 마디 화음으로 이어진다).
+  // 앞 화음에서 붙임줄을 시작한 음높이 → 다음 화음의 같은 음높이가 끝.
+  let prevTies = new Set(), curTies = new Set();
+
+  const tieStop = (n, pitch) => {
+    if (!n.chord) { prevTies = curTies; curTies = new Set(); }
+    return pitch != null && prevTies.has(pitch);
+  };
 
   struct.systems.forEach((sysd, si) => {
     const sys = systems[si];
@@ -308,7 +317,7 @@ export function assemble(struct, geometry, chordsBySystem) {
       const mi = Math.min(nmeas, Math.max(1, n.measure || 1)) - 1;
       buckets[mi].push({
         pitch: pitches[i], duration: n.duration,
-        dotted: !!n.dotted, tie: !!n.tie, tie_stop: prevTie,
+        dotted: !!n.dotted, tie: !!n.tie, tie_stop: tieStop(n, pitches[i]),
         // **슬러.** 붙임줄과 달리 여러 음표를 건너뛰므로 시작·끝을 따로
         // 싣는다. 없으면 「Pra——ise」 같은 긴 아치가 통째로 사라진다.
         ...(n.slurStart ? { slurStart: true } : {}),
@@ -321,7 +330,7 @@ export function assemble(struct, geometry, chordsBySystem) {
         ...(n.chord ? { chord: true } : {}),
         ...(!n.rest && pitches[i] == null ? {unresolved: true} : {}),
       });
-      prevTie = !!n.tie && !n.rest;
+      if (n.tie && !n.rest && pitches[i] != null) curTies.add(pitches[i]);
     });
 
     // 음표 k번째 → (마디, 마디 안 순서)

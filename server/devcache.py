@@ -72,6 +72,22 @@ def install() -> str:
 
     RC.read_page, RChd.read = counts, chords
 
+    # 코드 재판독도 — 105장 재측정마다 돈이 들지 않게
+    import chord_check as CC
+    orig_cc = CC.read
+
+    def chordcheck(strip, n, *a, **k):
+        f = _key("chordcheck", strip)
+        if os.path.exists(f):
+            hit = _load(f)
+            if hit is not None:
+                return [CC.SystemChords(**d) for d in hit]
+        d = orig_cc(strip, n, *a, **k)
+        _save(f, [x.model_dump() for x in d])
+        return d
+
+    CC.read = chordcheck
+
     # homr 도 같은 자리에 — 장당 10~20초라 105장 재측정마다 돌리면 30분이 더 든다
     import homr_runner as HR
     orig_homr = HR.read

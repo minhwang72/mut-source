@@ -555,6 +555,18 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
     import local_reader
     gate_issues = [struct["error"]] if struct.get("error") else []
     extraction["qualityGate"] = local_reader.quality_gate(extraction, gate_issues)
+    # **코드를 한 번 더 읽는다**(tools/chord_check) — 과금할 장에만(나머지는 어차피
+    # 과금하지 않는다). 두 판독이 다른 단은 확인 필요로 돌린다. 실패하면 과금 안 함.
+    if extraction["qualityGate"]["status"] == "ready":
+        import chord_check
+        try:
+            extraction["chordCheck"] = chord_check.check(img, extraction)
+        except Exception as e:                   # noqa: BLE001
+            print(f"  코드 재판독 실패: {e}", file=sys.stderr)
+            extraction["chordCheck"] = {"error": str(e)[:200]}
+            for s_ in struct.get("systems") or []:
+                s_.setdefault("review", []).append(chord_check.REVIEW)
+        extraction["qualityGate"] = local_reader.quality_gate(extraction, gate_issues)
     sw.lap("품질게이트")
     counts_pool.shutdown(wait=False)
     extraction["timing"] = sw.report()

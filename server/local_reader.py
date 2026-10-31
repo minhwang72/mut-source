@@ -468,7 +468,9 @@ def broken_beam_groups(struct: dict) -> int:
 
 # 확인만 하면 되는 사유 — 마디는 그려졌고 어느 쪽인지 사람이 보면 된다
 SOFT = re.compile(r"^(박자를 맞추려고 음가 \d+군데를 짐작|단 \d+: 마디 \d+: "
-                  r"(두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독))")
+                  r"(두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독)"
+                  # 코드 재판독이 달랐다(tools/chord_check) — 음표는 그대로 쓸 수 있다
+                  r"|단 \d+: 코드가 두 판독)")
 
 
 def _soft(msg: str) -> bool:
