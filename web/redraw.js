@@ -11,7 +11,7 @@
 // 서버는 여전히 악보 이미지를 만들지 않는다 — 구조 데이터만 준다.
 
 import { build } from './musicxml.js';
-import { assemble, checkBeats } from './rebuild.js';
+import { assemble, checkBeats, chordsByStaff } from './rebuild.js';
 import { assertResolved } from './source-pitch.js';
 import {
   fifths, formatNote, parseNote, transposeNote,
@@ -98,29 +98,7 @@ export async function redraw(canvas, ex, plan, chordTexts, origImage) {
   const geo = ex.geometry;
   const struct = ex.struct;
 
-  // 코드를 단별로 되돌려 놓는다 — assemble이 마디마다 하나씩 꺼내 쓴다.
-  //
-  // **필터 조건이 호출부와 한 글자도 달라선 안 된다.** chordTexts는 호출부가
-  // `!chord.dropped`로 걸러 이조한 결과이고, 여기서 세는 순서가 그것과
-  // 어긋나면 코드가 **엉뚱한 마디에 붙는다.** 그래서 조건을 같게 두고,
-  // 개수가 안 맞으면 조용히 넘어가지 않고 오류를 낸다.
-  // **x좌표를 함께 넘긴다.** assemble이 막대선으로 잘린 마디 구간에
-  // 배정하는 데 쓴다 — 마디당 하나씩 나눠 주면 19%를 버린다(실측).
-  const chordsBySystem = {};
-  let ci = 0;
-  (ex.systems || []).forEach((sysd, i) => {
-    const list = [];
-    for (const c of (sysd.chords || [])) {
-      if (c.dropped) continue;
-      list.push({ text: chordTexts[ci] ?? c.text, x: c.box?.x ?? 0 });
-      ci += 1;
-    }
-    chordsBySystem[i] = list;
-  });
-  if (ci !== chordTexts.length) {
-    throw new Error(`코드 개수가 맞지 않습니다 (${ci} vs ${chordTexts.length}) `
-      + '— 이조된 코드가 엉뚱한 마디에 붙을 수 있어 멈췄습니다');
-  }
+  const chordsBySystem = chordsByStaff(ex.systems, chordTexts);
 
   // The user-confirmed key is the fallback when no per-system signature exists.
   const { measures, report } = assemble(

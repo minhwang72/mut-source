@@ -77,7 +77,7 @@ def install() -> str:
     orig_homr = HR.read
 
     def homr(png, *a, **k):
-        f = _key("homr2", png)    # 음높이까지 담는 형식
+        f = _key("homr3", png)    # 음높이·붙임줄까지 담는 형식
         if os.path.exists(f):
             hit = _load(f)
             if hit is not None:

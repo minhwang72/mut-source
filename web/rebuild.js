@@ -154,6 +154,38 @@ export function addBeams(notes) {
  *
  * 반환: {measures, report:{notes, missingPitch, systems, measures}}
  */
+/**
+ * 코드를 단별로 되돌려 놓는다 — assemble이 마디마다 하나씩 꺼내 쓴다.
+ *
+ * **필터 조건이 호출부와 한 글자도 달라선 안 된다.** chordTexts는 호출부가
+ * `!chord.dropped`로 걸러 이조한 결과이고, 여기서 세는 순서가 그것과
+ * 어긋나면 코드가 **엉뚱한 마디에 붙는다.** 그래서 조건을 같게 두고,
+ * 개수가 안 맞으면 조용히 넘어가지 않고 오류를 낸다.
+ * **x좌표를 함께 넘긴다.** assemble이 막대선으로 잘린 마디 구간에
+ * 배정하는 데 쓴다 — 마디당 하나씩 나눠 주면 19%를 버린다(실측).
+ * **단 번호는 index 로.** 코드가 하나도 없는 단은 목록에서 빠지므로 순서로
+ * 세면 그 뒤 단의 코드가 전부 한 단씩 당겨진다(실측 camp0814b-10: 단8 이
+ * 빠져 단8~11 코드가 한 줄씩 위로 — 과금 장이었다).
+ */
+export function chordsByStaff(systems, chordTexts) {
+  const out = {};
+  let ci = 0;
+  (systems || []).forEach((sysd, i) => {
+    const list = [];
+    for (const c of (sysd.chords || [])) {
+      if (c.dropped) continue;
+      list.push({ text: chordTexts[ci] ?? c.text, x: c.box?.x ?? 0 });
+      ci += 1;
+    }
+    out[sysd.index ?? i] = list;
+  });
+  if (ci !== chordTexts.length) {
+    throw new Error(`코드 개수가 맞지 않습니다 (${ci} vs ${chordTexts.length}) `
+      + '— 이조된 코드가 엉뚱한 마디에 붙을 수 있어 멈췄습니다');
+  }
+  return out;
+}
+
 export function assemble(struct, geometry, chordsBySystem) {
   const per = beatsPerMeasure(struct);
   const splitPairs = splits(per, fullOf(struct));

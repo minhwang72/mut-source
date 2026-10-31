@@ -35,3 +35,13 @@ const r2 = assemble(struct, noBars, {});
 assert.ok(r2.report.missingPitch >= 1, '막대선 없는 경로가 깨졌다');
 
 console.log('ok');
+
+// 코드 없는 단이 목록에서 빠져도 뒤 단 코드가 당겨지지 않는가(camp0814b-10 단8)
+{
+  const { chordsByStaff } = await import('./rebuild.js');
+  const systems = [0, 1, 3].map((i) => ({ index: i, chords: [{ text: `C${i}`, box: { x: 5 } }] }));
+  const got = chordsByStaff(systems, ['X0', 'X1', 'X3']);
+  assert.deepStrictEqual(Object.keys(got), ['0', '1', '3']);
+  assert.strictEqual(got[3][0].text, 'X3');
+  assert.throws(() => chordsByStaff(systems, ['X0']));
+}

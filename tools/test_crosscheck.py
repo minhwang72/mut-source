@@ -314,3 +314,22 @@ def test_shifted_system_keeps_our_accidentals():
 
 if __name__ == "__main__":
     test_shifted_system_keeps_our_accidentals(); print("ok shift-acc")
+
+
+def test_homr_ties_adopted_across_measure():
+    def q(pos, m, d="quarter"):
+        return {"measure": m, "duration": d, "dotted": False, "rest": False, "pos": pos}
+    # camp0814a-3: homr 가 본 붙임줄(같은 높이 이웃)을 받는다 — 마디를 넘어도
+    s = {"beats": 4, "sourceFifths": 0, "systems": [{"system": 0, "srcFifths": 0, "notes":
+         [q("F4", 1), q("F4", 1), q("G4", 1), q("A4", 1), q("A4", 2), q("B4", 2), q("C5", 2), q("D5", 2)]}]}
+    r = merge(s, {"dur": [[["1"] * 4, ["1"] * 4]], "key": [[0, 0]],
+                  "pitch": [[["F4", "F4", "G4", "A4"], ["A4", "B4", "C5", "D5"]]],
+                  "tie": [[[True, False, True, True], [False] * 4]]})
+    ns = s["systems"][0]["notes"]
+    # F4~F4 · A4~A4(마디 넘음) 은 받고, G4→A4(다른 음)는 받지 않는다
+    assert [n.get("tie", False) for n in ns] == [True, False, False, True, False, False, False, False]
+    assert r.get("tiesAdopted") == 2
+
+
+if __name__ == "__main__":
+    test_homr_ties_adopted_across_measure(); print("ok ties")

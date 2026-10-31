@@ -519,9 +519,7 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
         head_ends=[int(s.get("headEnd") or 0)
                    for s in extraction["geometry"]["systems"]],
         marks=extraction["geometry"].get("marks") or [],
-        chords_by_system=[[c.get("text") for c in (sysd.get("chords") or [])
-                           if c.get("text")]
-                          for sysd in extraction["systems"]])
+        chords_by_system=_chords_by_staff(extraction["systems"], len(staves)))
     # **원조표를 struct 에 실어 준다.** local 경로는 넣는데 ai 경로는
     # 빠뜨리고 있었다(실측 25장 전부 sourceFifths=None). rebuild.js 는
     # `sysd.srcFifths ?? struct.sourceFifths` 로 읽으므로, 단별 값이 없는
@@ -586,6 +584,17 @@ def _add_barlines(geo: dict, ink, staves, struct: dict,
             entry["bars"] = [int(round(x)) for x in bars]
     except Exception as e:                       # noqa: BLE001
         print(f"  막대선 계산 실패: {e}", file=sys.stderr)
+
+
+def _chords_by_staff(systems: list[dict], n: int) -> list[list[str]]:
+    """단 번호(index)별 코드 글자. 코드가 없는 단은 목록에서 빠지므로 순서로 세면
+    그 뒤 단이 한 칸씩 당겨진다(실측 camp0814b-10: 단8 이 빠졌다)."""
+    out: list[list[str]] = [[] for _ in range(n)]
+    for i, sysd in enumerate(systems):
+        k = sysd.get("index", i)
+        if 0 <= k < n:
+            out[k] = [c.get("text") for c in (sysd.get("chords") or []) if c.get("text")]
+    return out
 
 
 def _read_structure(img, ink, staves, chords_by_system=None, sw=None,

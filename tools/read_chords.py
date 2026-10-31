@@ -247,11 +247,28 @@ def repair_slash(text: str) -> str | None:
     return f"{root}/{tail[0].upper()}{tail[1:]}"
 
 
+# **코드가 아닌 악보 글자.** 파서는 근음 글자로 시작하면 거의 다 받아서
+# 연주 지시어와 구역 표시가 코드로 출력됐다(실측 now0918-3 'Fine'·'D.S.',
+# camp0814b-02 구역 상자 'C′' — 과금 장이었다).
+_NOT_CHORD = re.compile(r"^(fine\.?|d\.\s?[sc]\..*|coda|segno|to\s?coda.*|[A-H][′'’]+)$",
+                        re.IGNORECASE)
+# **붙어 읽힌 코드 둘.** 'Esus4E7' 처럼 꼬리가 있는 코드 뒤에 근음 대문자가
+# 다시 나오면 두 코드다(실측 camp0814b-10: Esus4·E7, Fsus4·F7 이 한 조각으로).
+_TWO = re.compile(r"^([A-G][#b]?[^A-G/]+)([A-G][#b]?[^A-G]*)$")
+
+
+def split_merged(text: str) -> list[str]:
+    """붙어 읽힌 코드를 나눈다. 하나면 [text]."""
+    m = _TWO.match(text or "")
+    return [m.group(1), m.group(2)] if m else [text]
+
+
 def to_extraction(detect: dict, boxes: list[dict], reads: list[ChordRead],
                   meta: dict) -> dict:
     by_index = {r.index: r for r in reads}
     texts = [(by_index[i].text.strip() if i in by_index else "")
              for i in range(len(boxes))]
+    texts = ["" if _NOT_CHORD.match(t) else t for t in texts]
     # 슬래시를 되살린다. 고친 것은 확신도를 깎아 **사용자 확인 목록에
     # 올린다** — 조용히 바꾸지 않는다.
     fixed = set()
@@ -275,15 +292,23 @@ def to_extraction(detect: dict, boxes: list[dict], reads: list[ChordRead],
             continue
         s = systems.setdefault(b["system"], {"index": b["system"], "page": 0,
                                             "chords": []})
-        s["chords"].append({
-            "text": texts[i],
-            "box": {"x": b["x"], "y": b["y"], "w": b["w"], "h": b["h"]},
-            # 모델이 "코드 아님"이라 했지만 파서가 통과시킨 경우는 확신도를 깎아
-            # 사용자 확인 목록에 올린다.
-            "confidence": round(float(r.confidence)
-                               * (1.0 if r.is_chord else 0.6)
-                               * (0.7 if i in fixed else 1.0), 2),
-        })
+        parts = split_merged(texts[i])
+        if len(parts) > 1 and not all(validate_with_parser(parts)):
+            parts = [texts[i]]
+        # 나눈 코드는 상자를 글자 수 비율로 가른다 — 마디 배정이 x 를 쓴다
+        x, total = b["x"], sum(len(t) for t in parts)
+        for t in parts:
+            w = b["w"] * len(t) / total
+            s["chords"].append({
+                "text": t,
+                "box": {"x": x, "y": b["y"], "w": w, "h": b["h"]},
+                # 모델이 "코드 아님"이라 했지만 파서가 통과시킨 경우는 확신도를 깎아
+                # 사용자 확인 목록에 올린다. 나눈 것도 확인 목록에 올린다.
+                "confidence": round(float(r.confidence)
+                                   * (1.0 if r.is_chord else 0.6)
+                                   * (0.7 if i in fixed or len(parts) > 1 else 1.0), 2),
+            })
+            x += w
 
     for sysd in detect["systems"]:
         if sysd["index"] in systems:

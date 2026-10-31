@@ -56,6 +56,7 @@ def build(image_path: str, extraction: dict, semitones: int) -> tuple[Image.Imag
         texts = new_text[k:k + n]
         boxes = [c["box"] for c in sysd["chords"]]
         k += n
+        i = sysd.get("index", i)          # 코드 없는 단은 목록에서 빠진다 — 순서로 세지 않는다
         if i >= len(staves):
             continue
         st = staves[i]

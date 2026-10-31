@@ -135,3 +135,15 @@ j = src.index("if si in interlude")
 assert '"읽은 음표" in' in src[j:j + 200], "사유를 가리지 않고 통째로 뺀다"
 
 print("ok — 코드만 있는 간주 줄은 막지 않는다")
+
+
+def test_chords_follow_staff_index():
+    import serve
+    # camp0814b-10: 코드 없는 단 8(index 7)이 목록에서 빠졌다 — 뒤 단이 당겨지면 안 된다
+    systems = [{"index": i, "chords": [{"text": f"C{i}"}]} for i in range(11) if i != 7]
+    got = serve._chords_by_staff(systems, 11)
+    assert got[7] == [] and got[8] == ["C8"] and got[10] == ["C10"]
+
+
+if __name__ == "__main__":
+    test_chords_follow_staff_index(); print("ok chords-index")

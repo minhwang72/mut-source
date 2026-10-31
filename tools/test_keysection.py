@@ -33,4 +33,9 @@ assert few == [-1, -1], few
 # ── 코드가 없으면 그대로
 assert G.fix_sections_with_chords([1, -1], [[], []]) == [1, -1]
 
+# ── 바르게 센 조표를 코드로 깎지 않는다 — set0802-1: A장조 ♯3 위에 손으로 덧쓴
+#    G·D·C·Em 코드(카포). 깎으면 출력 조표가 ♯ 하나 모자란다
+cap = [["G", "D"], ["C", "G", "Em", "D"], ["G", "D", "C"]]
+assert G.fix_sections_with_chords([3, 3, 3], cap) == [3, 3, 3]
+
 print("ok")

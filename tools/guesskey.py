@@ -351,6 +351,13 @@ def fix_sections_with_chords(sections: list[int],
     if not sections:
         return sections
     out = list(sections)
+    # **늘리는 쪽으로만 고친다.** 근거가 '덜 세인다'이므로 ♯·♭ 를 빼는 보정은
+    # 하지 않는다 — 코드가 오선과 다른 키일 때(손으로 덧쓴 카포 코드) 바르게 센
+    # 조표를 깎았다(실측 set0802-1 · camp0814b-01 · camp0814c-01: A장조 ♯3 을 붉은
+    # G·D·C 코드에 맞춰 ♯2 로, wish0809-5: ♯5 를 잘못 읽은 코드에 맞춰 ♯4 로 —
+    # 넷 다 과금 장이었고 출력 조표가 틀렸다).
+    def more(f, cur):
+        return abs(f) > abs(cur) and (cur == 0 or (f > 0) == (cur > 0))
     i = 0
     while i < len(out):
         j = i
@@ -360,7 +367,7 @@ def fix_sections_with_chords(sections: list[int],
                  for t in (chords_by_system[si] or []) if t]
         if len(texts) >= min_chords:
             cur = out[i]
-            best = max((cur - 1, cur, cur + 1),
+            best = max((f for f in (cur - 1, cur, cur + 1) if f == cur or more(f, cur)),
                        key=lambda f: (_chord_fit(texts, f), f == cur))
             if best != cur and _chord_fit(texts, best) > _chord_fit(texts, cur):
                 for k in range(i, j + 1):
