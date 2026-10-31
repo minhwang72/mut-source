@@ -5,12 +5,21 @@
 놓친 코드(손글씨·회색 상자)는 아예 없고, 조각에 가사 글자가 섞이면 'Asus2'
 처럼 엉뚱한 코드가 된다. 과금 장 26장 대조에서 13장이 이걸로 틀렸다(2026-10-31).
 
-두 번째 판독은 **단마다 오선 위 띠를 통째로** 보여 주고 왼쪽부터 순서대로
-적게 한다. 단별로 둘을 견주어 다르면 그 단을 확인 필요로 돌린다 — 고치지는
-않는다(어느 쪽이 맞는지, 어느 마디인지 모른다).
+두 번째 판독은 **단마다 오선 위 띠를 통째로** 보여 주고 왼쪽부터 순서대로,
+몇 번째 마디인지와 함께 적게 한다. 단별로 둘을 견준다:
+  같다                       → 그대로
+  두 판독이 함께 읽은 코드의 마디 번호가 전부 맞는다
+    · 글자만 다른 코드       → 두 번째를 쓴다(조각에 섞인 가사·작은 글자 오독)
+    · 첫 판독이 놓친 코드     → 그 마디 코드 띠에서 아직 안 쓴 잉크 덩어리가
+                               꼭 그 개수만큼 있을 때만, 그 자리에 넣는다
+  그 밖(첫 판독에만 있는 코드, 마디가 어긋남, 자리를 못 찾음) → 확인 필요
+두 번째 판독이 대조한 표본(약 60개)에서 전부 맞았다 — 그래도 혼자 읽은 코드는
+마디 번호 일치와 잉크 자리로 한 번 더 묶는다. 덧칠해 지운 코드를 읽어 넣은 적이
+있다(day2conti-4 단2 'G7') — 프롬프트에서 뺀다.
 """
 from __future__ import annotations
 
+import difflib
 import re
 import sys
 
@@ -20,9 +29,14 @@ MODEL = "claude-sonnet-5-5"
 REVIEW = "코드가 두 판독에서 다릅니다 — 원본 확인 필요"
 
 
+class ChordAt(BaseModel):
+    text: str = Field(description="코드 심볼")
+    measure: int = Field(description="그 단 안에서 몇 번째 마디인가(1부터)")
+
+
 class SystemChords(BaseModel):
     system: int = Field(description="띠 왼쪽 빨간 번호")
-    chords: list[str] = Field(description="그 띠의 코드 심볼, 왼쪽부터 순서대로")
+    chords: list[ChordAt] = Field(description="그 띠의 코드, 왼쪽부터 순서대로")
 
 
 class PageChords(BaseModel):
@@ -30,9 +44,11 @@ class PageChords(BaseModel):
 
 
 PROMPT = """이 이미지는 악보의 단(오선 한 줄)마다 **오선 위쪽 띠**를 잘라 위에서부터 쌓은 것이다.
-각 띠 왼쪽의 **빨간 숫자**가 단 번호다(코드가 아니다). 띠 아래쪽에 오선 윗부분이 조금 보인다.
+각 띠 왼쪽의 **빨간 숫자**가 단 번호다(코드가 아니다). 띠 아래쪽에 오선 윗부분과 마디선이 보인다.
 
-띠 {n}개 전부에 대해, 그 단 위에 적힌 **코드 심볼을 왼쪽부터 순서대로** 적어라.
+띠 {n}개 전부에 대해, 그 단 위에 적힌 **코드 심볼을 왼쪽부터 순서대로** 적고, 각 코드가
+그 단에서 **몇 번째 마디** 위에 있는지 적어라. 단 왼쪽 끝부터 첫 마디선까지가 1번 마디다
+(음자리표·조표 구간 포함). 겹세로줄·도돌이 세로줄도 마디선으로 센다.
 
 규칙:
 - 보이는 대로 옮긴다. 올림표 `#`, 내림표 `b`. 예: Bb, Gm7, Ebmaj7, F#m7, Bb/D, Esus4, E7(sus4), D2/F#
@@ -41,6 +57,7 @@ PROMPT = """이 이미지는 악보의 단(오선 한 줄)마다 **오선 위쪽
 - 손글씨·색깔 코드도 코드다. 괄호 안 대체 코드(예: `G/D(Em)`)는 괄호째 한 개로 적는다.
 - **코드가 아닌 것은 빼라**: 가사, 연주 지시어(Fine, D.S., D.C., Coda, To Coda),
   구역 표시(A, B, C′ 같은 상자 글자), 템포, 마디 번호, 반복 괄호 번호(1., 2.).
+- **줄을 긋거나 덧칠해 지운 코드는 빼라.** 연주자가 지운 것이다. 글자가 일부 보여도 적지 않는다.
 - 코드가 없는 단은 빈 목록.
 
 {n}개 단을 번호 순서대로 모두 반환하라."""
@@ -113,33 +130,127 @@ def norm(t: str) -> str:
     return t
 
 
-def compare(extraction: dict, reads: list[SystemChords]) -> list[tuple[int, list, list]]:
-    """단별로 (단 번호, 첫 판독, 두 번째 판독) — 다른 단만."""
-    ours = {s.get("index", i): [norm(c["text"]) for c in s.get("chords") or [] if not c.get("dropped")]
-            for i, s in enumerate(extraction.get("systems") or [])}
-    theirs = {r.system - 1: [norm(c) for c in r.chords if c.strip()] for r in reads}
-    bad = []
-    for k in sorted(set(ours) | set(theirs)):
-        a, b = ours.get(k, []), theirs.get(k)
-        if b is None:
-            continue                     # 두 번째 판독이 그 단을 안 냈다 — 비교할 수 없다
-        if a != b:
-            bad.append((k, a, b))
-    return bad
+def measure_of(x: float, bars: list, sp: float) -> int:
+    """x 가 몇 번째 마디(1부터)인가 — rebuild.js 의 코드 배정과 같은 규칙."""
+    return 1 + sum(1 for b in bars if x >= b - sp)
 
 
-def check(img, extraction: dict) -> dict:
-    """두 번째 판독을 하고, 다른 단에 확인 필요를 단다. 통계를 돌려준다."""
+def ink_runs(ink, x0: float, x1: float, y0: float, y1: float, sp: float) -> list[tuple]:
+    """띠 안 잉크를 가로로 묶은 덩어리 (x 시작, x 끝). 0.8칸 넘게 비면 끊는다."""
+    h, w = ink.shape
+    a, b = max(0, int(x0)), min(w, int(x1))
+    ys, ye = max(0, int(y0)), min(h, int(y1))
+    if b <= a or ye <= ys:
+        return []
+    cols = ink[ys:ye, a:b].any(axis=0)
+    out, start, gap = [], None, 0
+    for i, v in enumerate(cols):
+        if v:
+            if start is None:
+                start = i
+            gap, last = 0, i
+        elif start is not None:
+            gap += 1
+            if gap > sp * 0.8:
+                out.append((a + start, a + last + 1))
+                start = None
+    if start is not None:
+        out.append((a + start, a + last + 1))
+    return [r for r in out if r[1] - r[0] >= sp * 0.5]
+
+
+def fix_system(ours: list[dict], theirs: list[ChordAt], geo: dict, ink) -> list[dict] | None:
+    """두 판독을 맞춘 코드 목록. 못 맞추면 None(확인 필요)."""
+    sp = float(geo.get("spacing") or 10)
+    bars = list(geo.get("bars") or [])
+    nmeas = len(bars) + 1
+    if any(not 1 <= c.measure <= nmeas for c in theirs):
+        return None
+    cx = [c["box"]["x"] + c["box"]["w"] / 2 for c in ours]
+    mo = [measure_of(x, bars, sp) for x in cx]
+    a = [norm(c["text"]) for c in ours]
+    b = [norm(c.text) for c in theirs]
+    out = [dict(c) for c in ours]
+    adds: dict[int, list[str]] = {}
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            pairs, extra = list(zip(range(i1, i2), range(j1, j2))), []
+        else:
+            # 글자가 다른 구간 — 우리 코드마다 같은 마디의 다음 두 번째 판독 코드와
+            # 짝짓고(글자 고침), 짝 못 지은 두 번째 판독 코드는 놓친 코드다
+            pairs, extra, j = [], [], j1
+            for i in range(i1, i2):
+                while j < j2 and theirs[j].measure < mo[i]:
+                    extra.append(j)
+                    j += 1
+                if j >= j2 or theirs[j].measure != mo[i]:
+                    return None                       # 첫 판독에만 있는 코드 — 못 가른다
+                pairs.append((i, j))
+                j += 1
+            extra += list(range(j, j2))
+        for i, j in pairs:
+            if mo[i] != theirs[j].measure:
+                return None                           # 마디가 어긋나면 어느 쪽도 못 믿는다
+            if a[i] != b[j]:
+                out[i] = {**out[i], "text": theirs[j].text, "confidence": 0.6, "recheck": "text"}
+        for j in extra:
+            adds.setdefault(theirs[j].measure, []).append(theirs[j].text)
+    if adds:
+        # 코드 띠 높이: 이 단의 첫 판독 코드가 있던 높이, 없으면 오선 위 1~4칸
+        top = float(geo["staffTop"])
+        ys = [c["box"]["y"] for c in ours] + [c["box"]["y"] + c["box"]["h"] for c in ours]
+        y0, y1 = (min(ys) - sp * 0.3, max(ys) + sp * 0.3) if ours else (top - sp * 4, top - sp * 0.8)
+        y1 = min(y1, top - sp * 0.3)
+        edges = [geo.get("left", 0), *bars, geo.get("right", ink.shape[1])]
+        taken = [(c["box"]["x"], c["box"]["x"] + c["box"]["w"]) for c in ours]
+        for m, texts in adds.items():
+            runs = [r for r in ink_runs(ink, edges[m - 1] + sp * 0.3, edges[m] - sp * 0.3, y0, y1, sp)
+                    if not any(r[0] < t1 and t0 < r[1] for t0, t1 in taken)]
+            if len(runs) != len(texts):
+                return None                           # 자리를 못 찾으면 넣지 않는다
+            for t, (r0, r1) in zip(texts, runs):
+                out.append({"text": t, "box": {"x": r0, "y": y0, "w": r1 - r0, "h": y1 - y0},
+                            "confidence": 0.6, "recheck": "added"})
+    return sorted(out, key=lambda c: c["box"]["x"])
+
+
+def check(img, extraction: dict, ink=None) -> dict:
+    """두 번째 판독으로 코드를 맞추고, 못 맞춘 단에 확인 필요를 단다. 통계를 돌려준다."""
     geo = (extraction.get("geometry") or {}).get("systems") or []
     st = (extraction.get("struct") or {}).get("systems") or []
     if not geo or not st:
         return {"skipped": True}
     strip, idx = strip_image(img, geo)
-    reads = read(strip, len(idx))
-    bad = compare(extraction, reads)
-    for k, a, b in bad:
+    reads = {r.system - 1: r.chords for r in read(strip, len(idx))}
+    systems = extraction.setdefault("systems", [])
+    by = {s.get("index", i): s for i, s in enumerate(systems)}
+    stat = {"systems": len(idx), "fixed": 0, "diff": 0, "where": []}
+    for k in idx:
+        if k not in reads:
+            continue                     # 두 번째 판독이 그 단을 안 냈다 — 비교할 수 없다
+        sysd = by.get(k)
+        ours = [c for c in (sysd or {}).get("chords") or [] if not c.get("dropped")]
+        theirs = [c for c in reads[k] if c.text.strip()]
+        if [norm(c["text"]) for c in ours] == [norm(c.text) for c in theirs]:
+            continue
+        g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)
+        got = fix_system(ours, theirs, g, ink) if g is not None and ink is not None else None
+        stat["where"].append(f"{k}: {[c['text'] for c in ours]} / "
+                             f"{[(c.text, c.measure) for c in theirs]}"
+                             + (" → 맞춤" if got is not None else ""))
+        if got is not None:
+            if sysd is None:
+                sysd = {"index": k, "page": 0, "staffTop": g["staffTop"],
+                        "staffBottom": g["staffBottom"], "chords": []}
+                systems.append(sysd)
+                systems.sort(key=lambda s: s.get("index", 0))
+                by[k] = sysd
+            dropped = [c for c in sysd.get("chords") or [] if c.get("dropped")]
+            sysd["chords"] = sorted(got + dropped, key=lambda c: c["box"]["x"])
+            stat["fixed"] += 1
+            continue
+        stat["diff"] += 1
         sys_ = next((s for s in st if s.get("system", -1) == k), None)
         if sys_ is not None and REVIEW not in sys_.setdefault("review", []):
             sys_["review"].append(REVIEW)
-    return {"systems": len(idx), "diff": len(bad),
-            "where": [f"{k}: {a} / {b}" for k, a, b in bad]}
+    return stat

@@ -77,7 +77,7 @@ def install() -> str:
     orig_cc = CC.read
 
     def chordcheck(strip, n, *a, **k):
-        f = _key("chordcheck", strip)
+        f = _key("chordcheck3", strip)   # 마디 번호 + 지운 코드 빼기 프롬프트
         if os.path.exists(f):
             hit = _load(f)
             if hit is not None:

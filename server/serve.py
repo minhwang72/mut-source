@@ -560,7 +560,7 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
     if extraction["qualityGate"]["status"] == "ready":
         import chord_check
         try:
-            extraction["chordCheck"] = chord_check.check(img, extraction)
+            extraction["chordCheck"] = chord_check.check(img, extraction, ink)
         except Exception as e:                   # noqa: BLE001
             print(f"  코드 재판독 실패: {e}", file=sys.stderr)
             extraction["chordCheck"] = {"error": str(e)[:200]}
