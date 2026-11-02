@@ -31,6 +31,7 @@ REVIEW = "코드가 두 판독에서 다릅니다 — 원본 확인 필요"
 
 class ChordAt(BaseModel):
     text: str = Field(description="코드 심볼")
+    # 마디 번호는 받지만 쓰지 않는다(fix_system 주석) — 캐시를 살리려고 형식을 둔다
     measure: int = Field(description="그 단 안에서 몇 번째 마디인가(1부터)")
 
 
@@ -130,11 +131,6 @@ def norm(t: str) -> str:
     return t
 
 
-def measure_of(x: float, bars: list, sp: float) -> int:
-    """x 가 몇 번째 마디(1부터)인가 — rebuild.js 의 코드 배정과 같은 규칙."""
-    return 1 + sum(1 for b in bars if x >= b - sp)
-
-
 def ink_runs(ink, x0: float, x1: float, y0: float, y1: float, sp: float) -> list[tuple]:
     """띠 안 잉크를 가로로 묶은 덩어리 (x 시작, x 끝). 0.8칸 넘게 비면 끊는다."""
     h, w = ink.shape
@@ -159,58 +155,69 @@ def ink_runs(ink, x0: float, x1: float, y0: float, y1: float, sp: float) -> list
     return [r for r in out if r[1] - r[0] >= sp * 0.5]
 
 
+def _root(t: str) -> str:
+    m = re.match(r"\(?([A-G][#b]?)", t or "")
+    return m.group(1) if m else (t or "")
+
+
 def fix_system(ours: list[dict], theirs: list[ChordAt], geo: dict, ink) -> list[dict] | None:
-    """두 판독을 맞춘 코드 목록. 못 맞추면 None(확인 필요)."""
+    """
+    두 판독을 맞춘 코드 목록. 못 맞추면 None(확인 필요).
+
+    **마디 번호는 쓰지 않는다** — 두 번째 판독이 마디를 하나 더 세는 일이 잦았다
+    (실측 wish0906-2 단6 · wish0823-4 단4: 4마디 단에 5번 마디). 대신 두 판독이
+    함께 읽은 코드를 기준점으로, 놓친 코드는 양옆 기준점 사이 코드 띠에서 아직
+    안 쓴 잉크 덩어리가 꼭 그 개수만큼 있을 때만 그 자리에 넣는다. 글자가 다른
+    코드는 근음이 같을 때만 짝지어 두 번째를 쓴다(가사가 섞인 'Asus2' → A).
+    """
     sp = float(geo.get("spacing") or 10)
-    bars = list(geo.get("bars") or [])
-    nmeas = len(bars) + 1
-    if any(not 1 <= c.measure <= nmeas for c in theirs):
-        return None
-    cx = [c["box"]["x"] + c["box"]["w"] / 2 for c in ours]
-    mo = [measure_of(x, bars, sp) for x in cx]
     a = [norm(c["text"]) for c in ours]
     b = [norm(c.text) for c in theirs]
     out = [dict(c) for c in ours]
-    adds: dict[int, list[str]] = {}
+    anchor: dict[int, int] = {}                       # 두 번째 판독 번호 → 첫 판독 번호
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
         if tag == "equal":
-            pairs, extra = list(zip(range(i1, i2), range(j1, j2))), []
+            pairs = list(zip(range(i1, i2), range(j1, j2)))
         else:
-            # 글자가 다른 구간 — 우리 코드마다 같은 마디의 다음 두 번째 판독 코드와
-            # 짝짓고(글자 고침), 짝 못 지은 두 번째 판독 코드는 놓친 코드다
-            pairs, extra, j = [], [], j1
+            pairs, j = [], j1
             for i in range(i1, i2):
-                while j < j2 and theirs[j].measure < mo[i]:
-                    extra.append(j)
+                while j < j2 and _root(b[j]) != _root(a[i]):
                     j += 1
-                if j >= j2 or theirs[j].measure != mo[i]:
+                if j >= j2:
                     return None                       # 첫 판독에만 있는 코드 — 못 가른다
                 pairs.append((i, j))
                 j += 1
-            extra += list(range(j, j2))
         for i, j in pairs:
-            if mo[i] != theirs[j].measure:
-                return None                           # 마디가 어긋나면 어느 쪽도 못 믿는다
+            anchor[j] = i
             if a[i] != b[j]:
                 out[i] = {**out[i], "text": theirs[j].text, "confidence": 0.6, "recheck": "text"}
-        for j in extra:
-            adds.setdefault(theirs[j].measure, []).append(theirs[j].text)
-    if adds:
-        # 코드 띠 높이: 이 단의 첫 판독 코드가 있던 높이, 없으면 오선 위 1~4칸
-        top = float(geo["staffTop"])
-        ys = [c["box"]["y"] for c in ours] + [c["box"]["y"] + c["box"]["h"] for c in ours]
-        y0, y1 = (min(ys) - sp * 0.3, max(ys) + sp * 0.3) if ours else (top - sp * 4, top - sp * 0.8)
-        y1 = min(y1, top - sp * 0.3)
-        edges = [geo.get("left", 0), *bars, geo.get("right", ink.shape[1])]
-        taken = [(c["box"]["x"], c["box"]["x"] + c["box"]["w"]) for c in ours]
-        for m, texts in adds.items():
-            runs = [r for r in ink_runs(ink, edges[m - 1] + sp * 0.3, edges[m] - sp * 0.3, y0, y1, sp)
-                    if not any(r[0] < t1 and t0 < r[1] for t0, t1 in taken)]
-            if len(runs) != len(texts):
-                return None                           # 자리를 못 찾으면 넣지 않는다
-            for t, (r0, r1) in zip(texts, runs):
-                out.append({"text": t, "box": {"x": r0, "y": y0, "w": r1 - r0, "h": y1 - y0},
-                            "confidence": 0.6, "recheck": "added"})
+    missing = [j for j in range(len(theirs)) if j not in anchor]
+    if not missing:
+        return sorted(out, key=lambda c: c["box"]["x"])
+    # 코드 띠 높이: 이 단의 첫 판독 코드가 있던 높이, 없으면 오선 위 0.8~4칸
+    top = float(geo["staffTop"])
+    ys = [c["box"]["y"] for c in ours] + [c["box"]["y"] + c["box"]["h"] for c in ours]
+    y0, y1 = (min(ys) - sp * 0.3, max(ys) + sp * 0.3) if ours else (top - sp * 4, top - sp * 0.8)
+    y1 = min(y1, top - sp * 0.3)
+    taken = [(c["box"]["x"], c["box"]["x"] + c["box"]["w"]) for c in ours]
+    left, right = float(geo.get("left", 0)), float(geo.get("right", ink.shape[1]))
+    k = 0
+    while k < len(missing):
+        grp = [missing[k]]
+        while k + 1 < len(missing) and missing[k + 1] == grp[-1] + 1:
+            k += 1
+            grp.append(missing[k])
+        k += 1
+        prv, nxt = grp[0] - 1, grp[-1] + 1
+        x0 = (ours[anchor[prv]]["box"]["x"] + ours[anchor[prv]]["box"]["w"]) if prv in anchor else left
+        x1 = ours[anchor[nxt]]["box"]["x"] if nxt in anchor else right
+        runs = [r for r in ink_runs(ink, x0 + sp * 0.2, x1 - sp * 0.2, y0, y1, sp)
+                if not any(r[0] < t1 and t0 < r[1] for t0, t1 in taken)]
+        if len(runs) != len(grp):
+            return None                               # 자리를 못 찾으면 넣지 않는다
+        for j, (r0, r1) in zip(grp, runs):
+            out.append({"text": theirs[j].text, "box": {"x": r0, "y": y0, "w": r1 - r0, "h": y1 - y0},
+                        "confidence": 0.6, "recheck": "added"})
     return sorted(out, key=lambda c: c["box"]["x"])
 
 

@@ -349,3 +349,23 @@ def test_homr_chord_tie():
 
 if __name__ == "__main__":
     test_homr_chord_tie(); print("ok chord tie")
+
+
+def test_explicit_glyph_confusion_adopts_homr():
+    def q(pos, m, tie=False, **k):
+        return {"measure": m, "duration": "quarter", "dotted": False, "rest": False, "pos": pos,
+                "tie": tie, **k}
+    # wish0906-4 단9(F장조): E♭5 의 ♭ 를 ♮ 로 읽었고 다음 마디 E5 로 붙는다. E 는 이 구간에서
+    # 임시표 없이 맞은 적이 없다 — 그래도 기호를 본 자리는 homr 를 받는다
+    s = {"beats": 4, "sourceFifths": -1, "systems": [{"system": 0, "srcFifths": -1, "notes":
+         [q("A4", 1), q("B4", 1), q("C5", 1), q("E5", 1, tie=True, natural=True),
+          q("E5", 2), q("D5", 2), q("C5", 2), q("B4", 2)]}]}
+    merge(s, {"dur": [[["1"] * 4, ["1"] * 4]], "key": [[-1, -1]],
+              "pitch": [[["A4", "Bb4", "C5", "Eb5"], ["Eb5", "D5", "C5", "Bb4"]]]})
+    e = s["systems"][0]["notes"][3]
+    assert e.get("accidental") == -1 and not e.get("natural")
+    assert not s["systems"][0].get("review")
+
+
+if __name__ == "__main__":
+    test_explicit_glyph_confusion_adopts_homr(); print("ok glyph")

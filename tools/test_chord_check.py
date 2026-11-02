@@ -31,10 +31,18 @@ def test_text_fixed_and_missing_added_at_ink():
     assert [(c["text"], c["box"]["x"]) for c in got] == [("A", 20), ("D", 150), ("G", 220)]
 
 
-def test_refuse_when_measure_or_place_disagrees():
+def test_measure_numbers_not_trusted():
+    # wish0906-2 단6: 두 번째 판독이 마디를 하나 더 셌다 — 그래도 앞뒤 사이 잉크로 넣는다
     ours = [chord("A", 20), chord("G", 220)]
-    # 함께 읽은 G 의 마디가 다르면 못 믿는다
-    assert fix_system(ours, [ChordAt(text="A", measure=1), ChordAt(text="G", measure=2)],
+    theirs = [ChordAt(text="A", measure=1), ChordAt(text="D", measure=3), ChordAt(text="G", measure=5)]
+    got = fix_system(ours, theirs, GEO, ink_with(20, 150, 220))
+    assert [c["text"] for c in got] == ["A", "D", "G"]
+
+
+def test_refuse_when_place_or_root_disagrees():
+    ours = [chord("A", 20), chord("G", 220)]
+    # 근음까지 다르면 어느 쪽인지 모른다
+    assert fix_system(ours, [ChordAt(text="Bm", measure=1), ChordAt(text="G", measure=3)],
                       GEO, ink_with(20, 220)) is None
     # 놓친 코드 자리에 잉크 덩어리가 없으면 넣지 않는다
     assert fix_system(ours, [ChordAt(text="A", measure=1), ChordAt(text="D", measure=2),
@@ -44,5 +52,6 @@ def test_refuse_when_measure_or_place_disagrees():
 
 
 if __name__ == "__main__":
-    test_norm(); test_text_fixed_and_missing_added_at_ink(); test_refuse_when_measure_or_place_disagrees()
+    test_norm(); test_text_fixed_and_missing_added_at_ink(); test_measure_numbers_not_trusted()
+    test_refuse_when_place_or_root_disagrees()
     print("ok")

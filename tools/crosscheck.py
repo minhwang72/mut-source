@@ -590,12 +590,11 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     per_m: dict = {}
     for b in bad:
         per_m[(id(b[0]), b[1])] = per_m.get((id(b[0]), b[1]), 0) + 1
-    if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
-            and all(b[3]["pos"][0] in plain for b in bad)
-            # 실측 wish0920-3 단3: 마디 1을 3도 밀어 읽은 homr 가 마디 2의 F♯ 를
-            # F♮ 로 읽었고, 그걸 받아 틀린 음이 든 채 통과할 뻔했다
-            and not any(id(b[0]) in shifted for b in bad)):
-        for _, _, _, x, want, _ in bad:
+    def adopt(items) -> bool:
+        """homr 임시표로 바꿔 보고, 구간 어긋남이 다 사라지면 남긴다(아니면 되돌린다)."""
+        nonlocal agree, bad
+        saved = [(x, x.get("natural"), x.get("accidental")) for _, _, _, x, _, _ in items]
+        for _, _, _, x, want, _ in items:
             x.pop("natural", None)
             x.pop("accidental", None)
             if want == 0:
@@ -605,8 +604,32 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
             x["homrAcc"] = True
         agree2, bad2, _ = run(_fifths_of(group, ours))
         if not bad2:
-            stat["accAdopted"] = stat.get("accAdopted", 0) + len(bad)
+            stat["accAdopted"] = stat.get("accAdopted", 0) + len(items)
             agree, bad = agree2, []
+            return True
+        for x, nat, acc in saved:
+            x.pop("homrAcc", None)
+            x.pop("natural", None)
+            x.pop("accidental", None)
+            if nat:
+                x["natural"] = nat
+            if acc is not None:
+                x["accidental"] = acc
+        return False
+    # **우리가 임시표 기호를 보고 종류만 틀린 것**(♭ 를 ♮ 로)은 조표 문제가 아니다 —
+    # 그 기호만 homr 값으로 바꿔 구간 어긋남이 다 사라지면 받는다(붙임줄로 이어진
+    # 다음 음은 따라 풀린다). 실측 wish0906-4 단9: E♭5 의 ♭ 를 ♮ 로 읽었다.
+    explicit = [b_ for b_ in bad
+                if b_[3].get("natural") or b_[3].get("accidental") is not None]
+    if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
+            and all(b[3]["pos"][0] in plain for b in bad)
+            # 실측 wish0920-3 단3: 마디 1을 3도 밀어 읽은 homr 가 마디 2의 F♯ 를
+            # F♮ 로 읽었고, 그걸 받아 틀린 음이 든 채 통과할 뻔했다
+            and not any(id(b[0]) in shifted for b in bad)):
+        adopt(bad)
+    elif (explicit and len(bad) <= 4
+            and not any(id(b[0]) in shifted for b in bad)):
+        adopt(explicit)
     stat["pitchAgree"] = stat.get("pitchAgree", 0) + agree
     stat["posDiff"] = stat.get("posDiff", 0) + len(pos)
     stat["accDiff"] = stat.get("accDiff", 0) + len(bad)
