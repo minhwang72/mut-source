@@ -129,6 +129,45 @@ def _ties(heads, curves, spacing: float) -> set[int]:
     return out
 
 
+# 곡선 점수 문턱 — 붙임줄·슬러·음가 판독은 이 이상만(그전 detect_guided 기본값)
+CURVE_CONF = 0.25
+# **단을 넘는 붙임줄.** 단 끝 음에서 오른쪽으로 나가는 곡선은 점수가 0.1~0.26 으로
+# 약하게 잡히는데(실측 day2conti-4 단2 · wish0906-3 단5), 붙임줄이 없는 단 끝에서는
+# 정답 과금 장 9장 통틀어 한 번도 안 나왔다. 그래서 다음 단 첫 음이 같은 높이일
+# 때만, 약한 곡선도 단 끝 붙임줄의 근거로 쓴다. 두 판독기(homr 포함) 다 놓쳤다.
+TIE_OUT_CONF = 0.08
+
+
+def _tie_out(heads, curves, spacing: float) -> None:
+    """단 마지막 머리에서 오른쪽(단 밖)으로 나가는 곡선이 있으면 tie_out 표시."""
+    leads = [h for h in heads if not h.get("chord")]
+    if not leads:
+        return
+    z = max(leads, key=lambda h: h["x"])
+    zx, zy = z["x"] + z["w"] / 2.0, z["y"] + z["h"] / 2.0
+    z["tie_out"] = any(
+        c["x"] >= zx - spacing * 0.6 and c["x"] < zx + spacing * 1.5
+        and c["x"] + c["w"] > zx + spacing * 1.0
+        and abs(c["y"] + c["h"] / 2.0 - zy) < spacing * 1.6
+        for c in curves)
+
+
+def _ties_across_systems(systems: list[dict]) -> int:
+    """앞 단 끝 음이 tieOut 이고 다음 단 첫 음이 같은 자리면 붙임줄로 잇는다."""
+    n = 0
+    for a, b in zip(systems, systems[1:]):
+        la = [x for x in a["notes"] if not x.get("chord")]
+        fb = [x for x in b["notes"] if not x.get("chord")]
+        if not la or not fb:
+            continue
+        x, y = la[-1], fb[0]
+        if (x.get("tieOut") and not x.get("tie") and not x.get("rest") and not y.get("rest")
+                and x.get("pos") and x.get("pos") == y.get("pos")):
+            x["tie"] = True
+            n += 1
+    return n
+
+
 SLUR_MIN_SPAN = 1.2    # 슬러로 볼 곡선의 최소 가로폭 (칸)
 
 
@@ -205,8 +244,10 @@ def detect_curves(big, model_path: str, expect, expect_rests) -> list[dict]:
     """
     import evaldet as E
 
+    # 낮은 점수 곡선도 받아 둔다 — 단 끝 붙임줄 판정(_tie_out)만 쓴다. 나머지
+    # 판정은 build_from 이 CURVE_CONF 이상만 넘긴다(그전과 같다).
     boxes, _ = E.detect_guided(_load(model_path), big, expect,
-                               expect_rests=expect_rests)
+                               expect_rests=expect_rests, conf_mark=TIE_OUT_CONF)
     return [b for b in boxes if b["class"] == "tie"]
 
 
@@ -640,10 +681,12 @@ def build_from(boxes, staves, strict, spacing: float, gray,
         cy = b["y"] + b["h"] / 2.0
         bysys[min(range(len(mids)), key=lambda i: abs(mids[i] - cy))].append(b)
     cbysys: list[list[dict]] = [[] for _ in staves]
+    lobysys: list[list[dict]] = [[] for _ in staves]     # 단 끝 붙임줄 판정용 약한 곡선
     for b in (curves if curves is not None else
               [b for b in boxes if b["class"] == "tie"]):
         cy = b["y"] + b["h"] / 2.0
-        cbysys[min(range(len(mids)), key=lambda i: abs(mids[i] - cy))].append(b)
+        k = min(range(len(mids)), key=lambda i: abs(mids[i] - cy))
+        (cbysys if b.get("conf", 1.0) >= CURVE_CONF else lobysys)[k].append(b)
 
     pages: list[list[dict]] = []
     n_chord = 0
@@ -729,6 +772,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
         chord_per_sys.append(got_chords)
         n_chord += got_chords
         tie_at = _ties(got, cur, spacing)
+        _tie_out(got, cur + lobysys[si_], spacing)
         slur_at = _slurs(got, cur, spacing, tie_at)
         starts = {a for a, _ in slur_at}
         stops = {b for _, b in slur_at}
@@ -745,6 +789,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                    "slurStart": bool(n.get("slurStart")),
                    "slurStop": bool(n.get("slurStop")),
                    "chord": bool(n.get("chord")),
+                   "tieOut": bool(n.get("tie_out")),
                    # **원본의 빔 묶음.** 같은 값이면 한 빔에 묶여 있었다 —
                    # 재조판할 때 묶음을 지어내면 "키만 바뀐 같은 악보"가
                    # 아니라 다른 악보로 보인다.
@@ -926,6 +971,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                               # 박자로 승격한 흐린 붙임점 — 검출이 아니라
                               # 추론이므로 표시해 둔다.
                               "chord": bool(it.get("chord")),
+                              "tieOut": bool(it.get("tieOut")),
                               "beamGroup": int(it.get("beamGroup", -1)),
                               "dotPromoted": bool(it.get("dotPromoted")),
                               "dotDemoted": bool(it.get("dotDemoted")),
@@ -1018,6 +1064,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
         if sections is not None and si < len(sections):
             entry["srcFifths"] = int(sections[si])
         systems.append(entry)
+    _ties_across_systems(systems)
     out = {"systems": systems, "source": "detector", "fitted": fixed,
            "beats": beats, "timeSignature": ts_txt, "rhythmRepair": repair,
            "headsPromoted": n_promoted}

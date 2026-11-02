@@ -99,3 +99,24 @@ def test_chord_member_follows_its_base():
 
 if __name__ == "__main__":
     test_chord_member_follows_its_base(); print("ok chord")
+
+
+def test_tie_across_systems():
+    from detstruct import _tie_out, _ties_across_systems
+    # day2conti-4: 단 끝 D4 에서 오른쪽으로 나가는 약한 곡선 + 다음 단 첫 D4 → 붙임줄
+    a = {"x": 1900, "y": 795, "w": 20, "h": 14}
+    _tie_out([{"x": 1800, "y": 795, "w": 20, "h": 14}, a],
+             [{"x": 1915, "y": 805, "w": 40, "h": 10, "conf": 0.17}], 18)
+    assert a["tie_out"]
+    b = {"x": 1500, "y": 795, "w": 20, "h": 14}
+    _tie_out([b], [{"x": 1400, "y": 805, "w": 40, "h": 10, "conf": 0.2}], 18)   # 왼쪽 곡선 — 아니다
+    assert not b["tie_out"]
+    n = lambda pos, **k: {"pos": pos, "rest": False, "chord": False, **k}
+    sys_ = [{"notes": [n("C4"), n("D4", tieOut=True)]}, {"notes": [n("D4"), n("E4")]},
+            {"notes": [n("F4", tieOut=True)]}, {"notes": [n("G4")]}]
+    assert _ties_across_systems(sys_) == 1
+    assert sys_[0]["notes"][1]["tie"] and not sys_[2]["notes"][0].get("tie")   # 다른 음이면 안 잇는다
+
+
+if __name__ == "__main__":
+    test_tie_across_systems(); print("ok tie-across")

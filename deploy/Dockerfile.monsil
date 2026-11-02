@@ -19,6 +19,8 @@ RUN python -m venv /opt/homr \
 # **검출 가중치도 올린다.** base 이미지의 omr.pt 는 펜·형광펜 없는 합성으로만
 # 학습한 옛것이다(2026-10-21 교체: 펜 합성 6천 장 미세조정, 105장 통과 25 → 28).
 COPY models/omr.pt /app/models/omr.pt
+# 곡선 모델 — 2026-11-02 마디·단을 넘는 붙임줄을 넣은 합성으로 미세조정(tools/gendata._cross_ties)
+COPY models/omr_tie.pt /app/models/omr_tie.pt
 COPY tools/ /app/tools/
 COPY server/ /app/server/
 COPY web/ /app/web/

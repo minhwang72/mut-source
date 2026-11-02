@@ -391,7 +391,39 @@ def random_score(rng, measures: int = 4,
         if rng.random() < 0.7:
             m["chords"] = [rng.choice(CHORD_ROOTS) + rng.choice(CHORD_TAILS)]
         out.append(m)
+    _cross_ties(out, rng, CROSS_TIE_RATE)
     return out, fifths
+
+
+# 마디를 넘는 붙임줄 비율(마디 경계마다). 단 끝에 걸리면 단을 넘는 붙임줄이 된다.
+CROSS_TIE_RATE = 0.3
+
+
+def _cross_ties(measures: list[dict], rng, rate: float) -> None:
+    """
+    **마디선·단을 넘는 붙임줄을 만든다.** _curves 는 마디 단위로 돌아 마디 끝
+    음의 붙임줄을 지워 왔다 — 그래서 곡선 검출기가 마디선·단을 넘는 붙임줄을
+    한 번도 못 봤고, 실제 악보에서 그 붙임줄을 두 판독기 다 놓쳤다(실측
+    2026-10-31 과금 장 대조: day2conti-2·day2conti-4·wish0906-3, 점수 0~0.17).
+    마디 끝 음과 다음 마디 첫 음을 같은 높이로 맞추고 잇는다. 화음·쉼표·
+    이미 곡선이 걸린 음은 건드리지 않는다.
+    """
+    for m, nxt in zip(measures, measures[1:]):
+        a_notes, b_notes = m["notes"], nxt["notes"]
+        if not a_notes or not b_notes or rng.random() >= rate:
+            continue
+        a, b = a_notes[-1], b_notes[0]
+        if (a.get("pitch") is None or b.get("pitch") is None or a.get("chord")
+                or (len(b_notes) > 1 and b_notes[1].get("chord"))
+                or any(a.get(k) for k in ("tie_stop", "slur", "slur_stop"))
+                or any(b.get(k) for k in ("tie", "tie_stop", "slur", "slur_stop"))):
+            continue
+        a["tie"] = True
+        b["pitch"] = a["pitch"]
+        b["tie_stop"] = True
+        b.pop("natural", None)
+        b.pop("lyric", None)
+        b.pop("syllabic", None)
 
 
 # ── 조판 흔들기 ──────────────────────────────────────────────────
