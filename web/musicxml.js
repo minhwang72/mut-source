@@ -150,17 +150,20 @@ export function build(measures, fifths, opts = {}) {
         : harmony(c.text, Number(c.offset) || 0));
     }
 
+    // 온쉼표 하나뿐인 마디는 마디 쉼 — 길이는 박자표대로(6/8 이면 3박)
+    const mrest = m.notes.length === 1 && m.notes[0].pitch == null
+      && m.notes[0].duration === 'whole' && !m.notes[0].dotted;
     for (const n of m.notes) {
       if (n.unresolved) throw new Error('미확정 음표를 쉼표로 바꾸어 출력할 수 없습니다');
       const dur = DUR[n.duration] ?? DUR.quarter;
-      const d = n.dotted ? Math.floor(dur * 3 / 2) : dur;
+      const d = mrest ? beats * DIVISIONS * 4 / beatType : n.dotted ? Math.floor(dur * 3 / 2) : dur;
       // 확인 권장 마디는 노란색(짐작했거나 두 판독기가 갈린 곳)
       x.push(m.flag ? '   <note color="#D99A00">' : '   <note>');
       // **화음.** 둘째 음부터 <chord/> 를 달면 같은 시각에 쌓여 그려지고
       // 박도 앞으로 가지 않는다. 콘티의 간주 스트립이 이 모양이다.
       if (n.chord) x.push('    <chord/>');
       if (n.pitch == null) {
-        x.push('    <rest/>');
+        x.push(mrest ? '    <rest measure="yes"/>' : '    <rest/>');
       } else {
         const p = parsePitch(n.pitch);
         x.push('    <pitch>', `     <step>${p.step}</step>`);

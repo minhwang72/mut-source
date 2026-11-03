@@ -51,7 +51,24 @@ def test_refuse_when_place_or_root_disagrees():
     assert fix_system(ours, [ChordAt(text="A", measure=1)], GEO, ink_with(20, 220)) is None
 
 
+def test_align_strip_primary():
+    from chord_check import align
+    # t027-3: 첫 판독이 'E'·'♭/F' 로 쪼갬 / t059-7: 한 글자 코드 'E' 를 놓침
+    geo = {**GEO, "headEnd": 10}
+    ink = ink_with(20, 120, 145, 220)                       # F · E · ♭/F · F(상자 없음)
+    ink[77:80, 300:303] = True                              # 점 하나 — 잡티
+    ours = [chord("F", 20), chord("E", 120), chord("Bb/F", 145)]
+    got = align(ours, [ChordAt(text="F", measure=1), ChordAt(text="Eb/F", measure=2),
+                       ChordAt(text="F", measure=3)], geo, ink, (30, 18), cw=14, ch=8)
+    assert [(c["text"], c["box"]["x"], c["box"]["w"]) for c in got] == \
+        [("F", 20, 20), ("Eb/F", 120, 45), ("F", 220, 18)]
+    # 첫 판독 상자의 근음이 다르면 짝짓지 않는다
+    assert align([chord("B", 20)], [ChordAt(text="A", measure=1)], geo, ink_with(20), (30, 18),
+                 cw=14, ch=8) is None
+
+
 if __name__ == "__main__":
     test_norm(); test_text_fixed_and_missing_added_at_ink(); test_measure_numbers_not_trusted()
-    test_refuse_when_place_or_root_disagrees()
+    test_refuse_when_place_or_root_disagrees(); test_align_strip_primary()
     print("ok")
+

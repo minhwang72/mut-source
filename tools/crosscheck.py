@@ -125,7 +125,8 @@ def merge(struct: dict, homr: list[list[list[str]]] | None) -> dict:
                 new += mine
                 continue
             got = _decide(sys_, mi, mine, theirs, full, stat,
-                          pit_t[at[k]] if pit_t and k in at else None)
+                          pit_t[at[k]] if pit_t and k in at else None,
+                          last=k == len(ours_m) - 1)
             if pit_t and k in at and [_tok(u[0]) for u in _units(got)] == theirs:
                 checks.append((mi, got, pit_t[at[k]], key_t[at[k]] if key_t else None))
             new += got
@@ -214,7 +215,7 @@ def _agreed_pickup(sys_: dict, full: float, stat: dict) -> None:
 
 def _missing_measures(systems, ours_m, at, skipped, seq_t, stat) -> None:
     """
-    **homr 가 읽은 음표 마디가 우리 판독에 통째로 없으면 막는다.**
+    **homr 가 읽은 마디가 우리 판독에 통째로 없으면 막는다.**
 
     두 판독이 나머지 마디를 똑같이 읽으면 '일치'로 통과하는데, 한쪽이 마디 하나를
     통째로 놓친 건 비교 대상에서 빠져 버렸다(실측 wish0830-4: 줄 첫머리 온음표
@@ -222,8 +223,10 @@ def _missing_measures(systems, ours_m, at, skipped, seq_t, stat) -> None:
     마디만 본다 — 우리가 아예 읽지 않은 단(손으로 그린 리듬 줄 등)은 앞뒤 짝이 없다.
     """
     back = {j: k for k, j in at.items()}
+    # 쉼표만 있는 마디도 본다 — 실측 t052-4 단3 끝: 온쉼표 마디(위에 코드 둘)를
+    # 우리만 놓쳐 마디 하나가 빠진 채 과금됐다
     for j in skipped:
-        if not any(not t.startswith("r") for t in seq_t[j]):
+        if not seq_t[j]:
             continue
         if (j - 1) not in back or (j + 1) not in back:
             continue
@@ -241,7 +244,7 @@ def _fifths(sys_: dict, struct: dict):
     return struct.get("sourceFifths") if f is None else f
 
 
-def _decide(sys_, mi, mine, theirs, full, stat, pitch=None) -> list[dict]:
+def _decide(sys_, mi, mine, theirs, full, stat, pitch=None, last=False) -> list[dict]:
     """짝지은 한 마디를 판정한다 — 규칙은 모듈 머리말."""
     units = _units(mine)
     ours = [_tok(u[0]) for u in units]
@@ -303,7 +306,11 @@ def _decide(sys_, mi, mine, theirs, full, stat, pitch=None) -> list[dict]:
     # 점4분쉼표를 4분쉼표로, 8분음표를 4분음표로 읽어 짝의 합(3+1)만 맞춘 오답이
     # 통과했다(실측 wish0823-5 단1 끝·단2 첫: homr 는 'r2 r1.5' · '0.5' 로 정답).
     both_short = _len(ours) < full - 1e-6 and _len(theirs) < full - 1e-6
-    if ((ok_o and ok_t) or both_short) and not _ours_saw_heads(units, theirs):
+    # **곡 마지막 마디는 짧을 수 있다**(못갖춘마디의 짝). homr 만 짧게 읽었다고
+    # 우리 쪽을 조용히 쓰면 안 된다 — 실측 t020-09 끝 마디: 2분음표를 우리는
+    # 온음표로(합 4박), homr 는 2분음표로(정답) 읽었는데 우리 쪽으로 과금됐다.
+    end_short = last and ok_o and _len(theirs) < full - 1e-6
+    if ((ok_o and ok_t) or both_short or end_short) and not _ours_saw_heads(units, theirs):
         stat["conflict"] += 1
         sys_.setdefault("review", []).append(f"마디 {mi}: 두 판독이 다르게 읽었습니다")
     else:

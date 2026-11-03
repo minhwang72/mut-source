@@ -120,3 +120,30 @@ def test_tie_across_systems():
 
 if __name__ == "__main__":
     test_tie_across_systems(); print("ok tie-across")
+
+
+def test_lone_beam_takes_unbeamed_neighbor():
+    from detstruct import _mend_lone_beams
+    # t010-8 단5: B16(묶음 1 혼자) 다음 점8분 A 가 빔을 못 찾았다
+    n = lambda d, g, **k: {"duration": d, "beamGroup": g, "rest": False, "chord": False, "measure": 1, **k}
+    sy = {"notes": [n("eighth", 0), n("16th", 0), n("16th", 1), n("eighth", -1, dotted=True), n("quarter", -1)]}
+    assert _mend_lone_beams([sy]) == 1 and sy["notes"][3]["beamGroup"] == 1
+    assert sy["notes"][4]["beamGroup"] == -1
+
+
+if __name__ == "__main__":
+    test_lone_beam_takes_unbeamed_neighbor(); print("ok lone-beam")
+
+
+def test_weak_tie_added_but_flagged():
+    from detstruct import _weak_ties, WEAK_TIE
+    # camp0814a-3 단0 마디1: F16~F8 붙임줄이 약한 곡선(0.14)으로만 보였다
+    n = lambda pos, **k: {"pos": pos, "rest": False, "chord": False, "measure": 1, **k}
+    sy = {"notes": [n("F4", tieWeak=True), n("F4"), n("G4", tieWeak=True), n("A4")]}
+    assert _weak_ties([sy]) == 1
+    assert sy["notes"][0]["tie"] and not sy["notes"][2].get("tie")      # 다른 음이면 안 잇는다
+    assert sy["review"] == [f"마디 1: {WEAK_TIE}"]
+
+
+if __name__ == "__main__":
+    test_weak_tie_added_but_flagged(); print("ok weak-tie")

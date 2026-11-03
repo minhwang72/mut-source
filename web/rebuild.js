@@ -42,16 +42,27 @@ export function fullOf(struct) {
 }
 
 export function beatsPerMeasure(struct) {
+  const full = fullOf(struct);
   return struct.systems.map((s) => {
-    const per = {};
+    const per = {}, only = {};
     for (const n of (s.notes || [])) {
       if (n.chord) continue;        // 화음 구성음은 박을 차지하지 않는다
       let v = DUR[n.duration] ?? 0;
       if (n.dotted) v = Math.floor(v * 3 / 2);
       per[n.measure] = (per[n.measure] || 0) + v;
+      only[n.measure] = only[n.measure] === undefined ? n : null;
+    }
+    // **온쉼표 하나뿐인 마디는 박자와 상관없이 한 마디 쉼**(6/8·3/4 에서도).
+    // 4박으로 세어 6/8 장이 막혔다(실측 t026-2).
+    for (const [m, n] of Object.entries(only)) {
+      if (isMeasureRest(n)) per[m] = full;
     }
     return per;
   });
+}
+
+export function isMeasureRest(n) {
+  return !!n && !!n.rest && n.duration === 'whole' && !n.dotted;
 }
 
 /**
@@ -80,7 +91,7 @@ export function splits(per, FULL_ = FULL) {
  * **확인 권장 마디** — 짐작한 음표가 있거나 두 판독기가 갈린 마디(1부터 센 번호).
  * 노란색으로 그려 사용자가 원본과 한 번 비교하게 한다(server quality_gate 'marked').
  */
-const SOFT_REVIEW = /^마디 (\d+): (두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독)/;
+const SOFT_REVIEW = /^마디 (\d+): (두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독|붙임줄이 흐리게)/;
 export function flaggedMeasures(sysd) {
   const out = new Set();
   for (const r of (sysd.review || [])) {

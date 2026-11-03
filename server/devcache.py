@@ -87,6 +87,19 @@ def install() -> str:
         return d
 
     CC.read = chordcheck
+    orig_vote = CC.vote
+
+    def chordvote(im, n, *a, **k):
+        f = _key("chordvote1", im)
+        if os.path.exists(f):
+            hit = _load(f)
+            if hit is not None:
+                return hit
+        d = orig_vote(im, n, *a, **k)
+        _save(f, d)
+        return d
+
+    CC.vote = chordvote
 
     # homr 도 같은 자리에 — 장당 10~20초라 105장 재측정마다 돌리면 30분이 더 든다
     import homr_runner as HR

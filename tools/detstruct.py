@@ -98,7 +98,7 @@ TIE_OUTSIDE = 0.5      # 머리 중심 바깥으로 봐줄 곡선 끝 (칸) — 
 TIE_SPAN = 0.5         # 두 머리 간격 중 곡선이 덮어야 할 최소 비율
 
 
-def _ties(heads, curves, spacing: float) -> set[int]:
+def _ties(heads, curves, spacing: float, edge: bool = False) -> set[int]:
     """
     **붙임줄인 곡선만 고른다.**
 
@@ -120,9 +120,13 @@ def _ties(heads, curves, spacing: float) -> set[int]:
             continue
         ax = a["x"] + a["w"] / 2.0
         bx = b["x"] + b["w"] / 2.0
+        # edge: 머리 상자 가장자리까지 봐준다 — 약한 곡선 상자는 머리 왼끝에서
+        # 시작하기도 했다(실측 camp0814a-3 단0: 중심-반칸보다 2px 바깥)
+        lo = min(ax - slop, a["x"] - spacing * 0.2) if edge else ax - slop
+        hi = max(bx + slop, b["x"] + b["w"] + spacing * 0.2) if edge else bx + slop
         for c in curves:
             cx0, cx1 = c["x"], c["x"] + c["w"]
-            if (cx0 >= ax - slop and cx1 <= bx + slop
+            if (cx0 >= lo and cx1 <= hi
                     and cx1 - cx0 >= (bx - ax) * TIE_SPAN):
                 out.add(i)
                 break
@@ -165,6 +169,63 @@ def _ties_across_systems(systems: list[dict]) -> int:
                 and x.get("pos") and x.get("pos") == y.get("pos")):
             x["tie"] = True
             n += 1
+    return n
+
+
+WEAK_TIE = "붙임줄이 흐리게 보입니다 — 원본 확인 필요"
+
+
+def _weak_ties(systems: list[dict]) -> int:
+    """
+    약한 곡선으로만 보인 붙임줄을 넣고 그 마디를 확인 권장으로 돌린다.
+
+    실측 camp0814a-3 단0 마디1: `F8. F16~F8` 의 붙임줄이 0.14 로만 잡혀 빠진 채
+    과금됐다. 약한 곡선 93건 중 약 10%는 붙임줄이 아니라(긴 이음줄·손글씨 표시)
+    그냥 넣으면 틀린 장을 과금한다 — 넣고, 과금은 하지 않는다.
+    """
+    n = 0
+    for sy in systems:
+        seq = [x for x in sy["notes"] if not x.get("chord")]
+        for x, y in zip(seq, seq[1:]):
+            if (x.get("tieWeak") and not x.get("tie") and not x.get("rest") and not y.get("rest")
+                    and x.get("pos") and x.get("pos") == y.get("pos")):
+                x["tie"] = True
+                msg = f"마디 {x.get('measure')}: {WEAK_TIE}"
+                if msg not in sy.setdefault("review", []):
+                    sy["review"].append(msg)
+                n += 1
+    return n
+
+
+def _mend_lone_beams(systems: list[dict]) -> int:
+    """
+    **음표 하나짜리 빔 묶음은 없다** — 짝이 빔을 못 찾은 것이다. 바로 옆
+    (뒤 먼저, 없으면 앞) 빔 없는 8분 이하 음표를 그 묶음에 넣는다.
+
+    실측(처음 보는 30장, 2026-11-03): t010-8·t037-4 의 `B16~ | B16 A8.` 에서
+    점8분 A 가 빔 상자 끝을 벗어나 -1 이 됐고, 16분 B 혼자 남은 묶음이 박
+    격자에서 끝나 "빔 묶음 음가 합" 으로 장 전체가 막혔다(판독은 맞았다).
+    """
+    short = {"eighth", "16th", "32nd"}
+    n = 0
+    for sy in systems:
+        seq = [x for x in sy["notes"] if not x.get("chord")]
+        size: dict[int, int] = {}
+        for x in seq:
+            if not x.get("rest") and x.get("beamGroup", -1) >= 0:
+                size[x["beamGroup"]] = size.get(x["beamGroup"], 0) + 1
+        for i, x in enumerate(seq):
+            g = x.get("beamGroup", -1)
+            if x.get("rest") or g < 0 or size.get(g) != 1:
+                continue
+            for j in (i + 1, i - 1):
+                y = seq[j] if 0 <= j < len(seq) else None
+                if (y is not None and not y.get("rest") and y.get("beamGroup", -1) < 0
+                        and y["duration"] in short and y.get("measure") == x.get("measure")):
+                    y["beamGroup"] = g
+                    size[g] = 2
+                    n += 1
+                    break
     return n
 
 
@@ -680,6 +741,14 @@ def build_from(boxes, staves, strict, spacing: float, gray,
     for b in boxes:
         cy = b["y"] + b["h"] / 2.0
         bysys[min(range(len(mids)), key=lambda i: abs(mids[i] - cy))].append(b)
+    # **음자리표 앞에는 음표가 없다.** 단 왼쪽 바깥의 연습 기호 상자 'C' 를 온음표로
+    # 읽어 다음 마디로 끼웠다(실측 t052-4 단4). 오선 왼끝은 그 상자까지 늘어나
+    # 잡혀서(66px, 실제 286px) 기준이 못 된다 — 음자리표 상자를 기준으로 쓴다.
+    for grp_ in bysys:
+        clefs = [b["x"] for b in grp_ if b["class"].startswith("clef")]
+        if clefs:
+            grp_[:] = [b for b in grp_ if not (b["class"].startswith("notehead")
+                                                and b["x"] + b["w"] / 2.0 < min(clefs))]
     cbysys: list[list[dict]] = [[] for _ in staves]
     lobysys: list[list[dict]] = [[] for _ in staves]     # 단 끝 붙임줄 판정용 약한 곡선
     for b in (curves if curves is not None else
@@ -773,6 +842,11 @@ def build_from(boxes, staves, strict, spacing: float, gray,
         n_chord += got_chords
         tie_at = _ties(got, cur, spacing)
         _tie_out(got, cur + lobysys[si_], spacing)
+        # 약한 곡선(0.08~0.25)만 있는 붙임줄 자리 — 105장 93건을 원본과 보니 약 90%가
+        # 진짜 붙임줄이었다(2026-11-03). 표시만 해 두고 serve 가 교차 검증 뒤에
+        # 붙임줄을 넣되 그 마디는 확인 권장(과금 안 함)으로 돌린다.
+        for i in _ties(got, cur + lobysys[si_], spacing, edge=True) - tie_at:
+            got[i]["tie_weak"] = True
         slur_at = _slurs(got, cur, spacing, tie_at)
         starts = {a for a, _ in slur_at}
         stops = {b for _, b in slur_at}
@@ -790,6 +864,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                    "slurStop": bool(n.get("slurStop")),
                    "chord": bool(n.get("chord")),
                    "tieOut": bool(n.get("tie_out")),
+                   "tieWeak": bool(n.get("tie_weak")),
                    # **원본의 빔 묶음.** 같은 값이면 한 빔에 묶여 있었다 —
                    # 재조판할 때 묶음을 지어내면 "키만 바뀐 같은 악보"가
                    # 아니라 다른 악보로 보인다.
@@ -972,6 +1047,7 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                               # 추론이므로 표시해 둔다.
                               "chord": bool(it.get("chord")),
                               "tieOut": bool(it.get("tieOut")),
+                              "tieWeak": bool(it.get("tieWeak")),
                               "beamGroup": int(it.get("beamGroup", -1)),
                               "dotPromoted": bool(it.get("dotPromoted")),
                               "dotDemoted": bool(it.get("dotDemoted")),
@@ -1049,6 +1125,12 @@ def build_from(boxes, staves, strict, spacing: float, gray,
                         continue
                     v = BEATS.get(n["duration"], 0) * (1.5 if n.get("dotted") else 1.0)
                     per_m[n.get("measure")] = per_m.get(n.get("measure"), 0.0) + v * 8
+                # 온쉼표 하나뿐인 마디는 한 마디 쉼(6/8 에서도) — web/rebuild.js 와 같게
+                for k in per_m:
+                    ms_ = [n for n in notes if not n.get("chord") and n.get("measure") == k]
+                    if (len(ms_) == 1 and ms_[0].get("rest") and ms_[0]["duration"] == "whole"
+                            and not ms_[0].get("dotted")):
+                        per_m[k] = full_u
                 # 단의 첫·끝 마디가 짧은 건 쪼개진 짝·못갖춘마디일 수 있다 —
                 # 그걸로 개수 경고를 띄우면 정상 단이 막힌다(짝은 게이트가 본다)
                 ks_ = sorted(per_m)

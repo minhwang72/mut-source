@@ -369,3 +369,21 @@ def test_explicit_glyph_confusion_adopts_homr():
 
 if __name__ == "__main__":
     test_explicit_glyph_confusion_adopts_homr(); print("ok glyph")
+
+
+def test_missing_rest_measure_blocks():
+    # t052-4 단3 끝: homr 만 온쉼표 마디를 읽었다 — 앞뒤가 짝지어졌으면 막는다
+    s = st([n("whole", m=1), n("whole", m=2), n("half", m=3), n("half", m=3)])
+    merge(s, [[["4"], ["4"], ["r4"], ["2", "2"]]])
+    assert any("마디가 하나 빠졌을" in r for r in s["systems"][0].get("review", []))
+
+
+def test_short_last_measure_from_homr_is_flagged():
+    # t020-09 끝 마디: 2분음표를 우리는 온음표로(4박), homr 는 2분음표로 읽었다
+    s = st([n("whole", m=1), n("whole", m=2)])
+    merge(s, [[["4"], ["2"]]])
+    assert any("두 판독이 다르게" in r for r in s["systems"][0].get("review", []))
+
+
+if __name__ == "__main__":
+    test_missing_rest_measure_blocks(); test_short_last_measure_from_homr_is_flagged(); print("ok end")

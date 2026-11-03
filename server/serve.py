@@ -552,6 +552,19 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
     if homr_pool is not None:
         homr_pool.shutdown(wait=False)
 
+    # 외톨이 빔 묶음 보정은 음가가 다 정해진 뒤(교차 검증 뒤)에 — tools/detstruct.py
+    if struct.get("systems"):
+        import detstruct as DS
+        DS._mend_lone_beams(struct["systems"])
+        DS._weak_ties(struct["systems"])
+        # 오선이 5줄로 안 잡힌 단은 음 자리(pos)가 없어 homr 와 음높이를 대조하지
+        # 못한다 — 대조 안 된 음높이로 과금하지 않는다(실측 t009-3 단3: 전부 건너뜀)
+        for s_ in struct["systems"]:
+            if any(not n.get("rest") and not n.get("pos") for n in s_.get("notes") or []):
+                msg = "음 높이를 교차 확인하지 못했습니다 — 원본 확인 필요"
+                if msg not in s_.setdefault("review", []):
+                    s_["review"].append(msg)
+
     import local_reader
     gate_issues = [struct["error"]] if struct.get("error") else []
     extraction["qualityGate"] = local_reader.quality_gate(extraction, gate_issues)

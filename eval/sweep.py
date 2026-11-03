@@ -17,8 +17,9 @@ import serve
 import db as DB
 
 serve.STATE["mode"] = "ai"
-PAGES = sys.argv[1:] or sorted(f[:-4] for f in os.listdir("악보샘플/이미지")
-                               if f.endswith(".png"))
+# SWEEP_DIR 로 다른 악보 폴더를 잴 수 있다(처음 보는 악보 측정용)
+DIR = os.environ.get("SWEEP_DIR") or "악보샘플/이미지"
+PAGES = sys.argv[1:] or sorted(f[:-4] for f in os.listdir(DIR) if f.endswith(".png"))
 OUT = os.environ.get("SWEEP_OUT") or "eval/sweep.json"   # 비교용으로 바꿔 쓴다
 SDIR = OUT[:-5] + "_structs"
 done = {r["page"]: r for r in json.load(open(OUT))} if os.path.exists(OUT) else {}
@@ -29,7 +30,7 @@ for name in PAGES:
         continue
     t = time.time()
     try:
-        ex = serve.read_sheet(open(f"악보샘플/이미지/{name}.png", "rb").read(), None)
+        ex = serve.read_sheet(open(f"{DIR}/{name}.png", "rb").read(), None)
         g = ex["qualityGate"]
         st = ex.get("struct") or {}
         json.dump({"struct": st, "gate": g, "cross": ex.get("crossCheck"),

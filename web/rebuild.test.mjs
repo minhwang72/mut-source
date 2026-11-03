@@ -62,3 +62,20 @@ console.log('ok');
   assert.deepStrictEqual(a.map((x) => [x.pitch, x.tie, x.tie_stop]), [['C5', true, false], ['E5', true, false]]);
   assert.deepStrictEqual(b.map((x) => [x.pitch, x.tie_stop]), [['C5', true], ['E5', true]]);
 }
+
+// 온쉼표 하나뿐인 마디는 6/8 에서도 한 마디(t026-2)
+{
+  const { beatsPerMeasure } = await import('./rebuild.js');
+  const { build } = await import('./musicxml.js');
+  const struct = { beats: 3, systems: [{ notes: [
+    { measure: 1, duration: 'whole', rest: true },
+    { measure: 2, duration: 'quarter', dotted: true }, { measure: 2, duration: 'quarter', dotted: true },
+    { measure: 3, duration: 'whole', rest: true }, { measure: 3, duration: 'eighth' },
+  ] }] };
+  const per = beatsPerMeasure(struct)[0];
+  assert.equal(per[1], 24);
+  assert.equal(per[2], 24);
+  assert.equal(per[3], 36);                     // 다른 음이 같이 있으면 온쉼표 그대로
+  const xml = build([{ notes: [{ pitch: null, duration: 'whole' }] }], 0, { beats: 6, beatType: 8 });
+  assert.match(xml, /<rest measure="yes"\/>\s*<duration>24<\/duration>/);
+}
