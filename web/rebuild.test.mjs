@@ -79,3 +79,10 @@ console.log('ok');
   const xml = build([{ notes: [{ pitch: null, duration: 'whole' }] }], 0, { beats: 6, beatType: 8 });
   assert.match(xml, /<rest measure="yes"\/>\s*<duration>24<\/duration>/);
 }
+
+// 마디줄에 걸친 긴 코드는 글자 가운데로 다음 마디에 붙는다(now0918-11 Bbm/Db)
+{
+  const { chordsByStaff } = await import('./rebuild.js');
+  const got = chordsByStaff([{ index: 0, chords: [{ text: 'Bbm/Db', box: { x: 895, w: 150 } }] }], ['Bbm/Db']);
+  assert.strictEqual(got[0][0].x, 970);
+}

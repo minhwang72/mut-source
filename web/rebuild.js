@@ -185,7 +185,11 @@ export function chordsByStaff(systems, chordTexts) {
     const list = [];
     for (const c of (sysd.chords || [])) {
       if (c.dropped) continue;
-      list.push({ text: chordTexts[ci] ?? c.text, x: c.box?.x ?? 0 });
+      // **글자 가운데로 자리를 잡는다.** 긴 코드(Bbm/Db, B(sus4)/D#)는 다음 마디 첫 박
+      // 위에 가운데 맞춰 찍혀 왼쪽 끝이 마디줄을 넘어온다 — 왼쪽 끝으로 재면 앞 마디에
+      // 붙었다(실측 now0918-11·wish0809-6·t060-1, 과금 장 포함)
+      list.push({ text: chordTexts[ci] ?? c.text,
+                  x: c.box ? c.box.x + (c.box.w || 0) / 2 : 0 });
       ci += 1;
     }
     out[sysd.index ?? i] = list;
@@ -373,7 +377,7 @@ export function assemble(struct, geometry, chordsBySystem) {
     for (const c of chords) {
       let mi = 0;
       for (let i = 0; i < edges.length - 1; i += 1) {
-        if ((c.x ?? 0) >= edges[i] - sp) mi = i;
+        if ((c.x ?? 0) >= edges[i] - sp * 0.5) mi = i;
       }
       mi = Math.min(mi, nmeas - 1);
       let off = 0;

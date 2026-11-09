@@ -370,6 +370,7 @@ def detect_guided(model, big, expect: list[int], conf_hi: float = 0.50,
                                     or c["class"] == "tie"
                                     else conf_hi)]
 
+        dots = [c for c in cands if c["class"] == "aug_dot" and c["conf"] >= conf_hi]
         want = expect[si] if si < len(expect) else None
         keep, extra = [], 0
         dropped: list[dict] = []
@@ -393,6 +394,13 @@ def detect_guided(model, big, expect: list[int], conf_hi: float = 0.50,
                 # 잡혔고 하나는 점수 0.26이었다). 콘티는 멜로디 한 줄이라
                 # 같은 x에 머리 둘은 거의 없다.
                 if _same_x(c, keep, sp):
+                    continue
+                # **확실한 붙임점 자리의 머리는 받지 않는다.** 점2분음표의 점이
+                # 낮은 점수 머리로도 잡혀, 개수를 채우다 2분음표가 하나 더
+                # 생겼다(실측 t027-3 단1, 재학습 검출기에서)
+                if any(abs(c["x"] + c["w"] / 2 - d["x"] - d["w"] / 2) < sp * 0.5
+                       and abs(c["y"] + c["h"] / 2 - d["y"] - d["h"] / 2) < sp * 0.5
+                       for d in dots):
                     continue
                 keep.append(c)
                 extra += 1

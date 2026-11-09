@@ -536,6 +536,7 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     """
     if not isinstance(ours, int):
         return
+    loose_key = False
     flat = [c for cs in checks for c in cs]
     if not flat:
         return
@@ -567,11 +568,19 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
         hks = [c[3] for c in flat if isinstance(c[3], int)]
         maj = max(set(hks), key=hks.count) if hks else None
 
-        def fits_f(f):
+        def fits_f(f, loose=False):
             left = run(f)[1]
+            # homr 가 읽은 조표로 어긋남이 1/5 이하로 줄면 그 조표다(실측 t030-2: ♯4 를
+            # ♯6 으로 읽어 56음이 어긋났는데 ♯4 면 4음 — 하나도 안 남아야 고치는
+            # 규칙에 걸려 못 고쳤다). 남은 음은 homr 임시표를 받지 않고 막는다 —
+            # 같은 장에서 homr 가 '1./2.' 절 표시를 겹올림표로 읽었다
+            if loose and f == maj and len(left) * 5 <= len(bad):
+                return True
             return len(left) < len(bad) and all(
                 b[5] is not None and maj is not None and b[5] != maj for b in left)
         fits = [f for f in cands if abs(f) <= 7 and fits_f(f)]
+        if not fits and maj in cands and abs(maj) <= 7 and fits_f(maj, loose=True):
+            fits, loose_key = [maj], True
         # 대조한 음으로는 둘 이상이 맞으면(그 음이름이 안 나와서) homr 가 읽은 조표를
         # 고른다 — 음높이로 반박되지 않은 homr 조표다(실측 now0918-3 E♭ 구간: B 만 나와
         # ♭1·♭3 둘 다 맞았다)
@@ -628,7 +637,9 @@ def _key_check(group: list[dict], checks: list[list], ours, stat) -> None:
     # 다음 음은 따라 풀린다). 실측 wish0906-4 단9: E♭5 의 ♭ 를 ♮ 로 읽었다.
     explicit = [b_ for b_ in bad
                 if b_[3].get("natural") or b_[3].get("accidental") is not None]
-    if (bad and len(bad) <= 4 and max(per_m.values()) <= 2
+    if loose_key:
+        pass                    # 남은 어긋남은 아래에서 막는다(homr 임시표를 받지 않음)
+    elif (bad and len(bad) <= 4 and max(per_m.values()) <= 2
             and all(b[3]["pos"][0] in plain for b in bad)
             # 실측 wish0920-3 단3: 마디 1을 3도 밀어 읽은 homr 가 마디 2의 F♯ 를
             # F♮ 로 읽었고, 그걸 받아 틀린 음이 든 채 통과할 뻔했다

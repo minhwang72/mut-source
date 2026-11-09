@@ -563,6 +563,11 @@ def promote_heads(grp, got, spares, strict, st, spacing: float, gray,
     full = float(beats)
     cands = sorted((c for c in spares if c.get("conf", 0) >= SPARE_MIN_CONF),
                    key=lambda c: -c.get("conf", 0))
+    # **빈 머리는 2분·온음표를 바꿔서도 넣어 본다.** 기둥 없는 온음표가 2분 머리로
+    # 잡히면 2박이 모자라 되살리지 못했다(실측 t008-8 단4, 재학습 검출기에서
+    # 온음표 0.45 → 2분 0.28). 박자 합이 정확히 맞을 때만 받으므로 안전하다.
+    swap = {"notehead_half": "notehead_whole", "notehead_whole": "notehead_half"}
+    cands += [{**c, "class": swap[c["class"]]} for c in cands if c["class"] in swap]
     if not cands:
         return grp, got, 0
 
@@ -622,7 +627,7 @@ def promote_heads(grp, got, spares, strict, st, spacing: float, gray,
                 break
         if picked is None:
             break
-        cands = [c for c in cands if c is not picked]
+        cands = [c for c in cands if not (c["x"] == picked["x"] and c["y"] == picked["y"])]
     return grp, got, n
 
 

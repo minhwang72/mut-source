@@ -79,7 +79,16 @@ def build_measure(lab, heads, cands, x0, x1, sp, top, bot):
                 LEVEL.get(D.get(h["duration"], "4"), 0) != LEVEL.get(base, 0):
             return None
         out.append({"class": HEAD.get(base, "notehead_filled"), **h["head"]})
-        for m in h.get("members", []):
+        col = [h["head"], *h.get("members", [])]
+        # 판독이 놓친 화음 구성음 — 라벨에 없으면 학습이 그 머리를 배경으로 배운다.
+        # 같은 기둥(가로 0.5칸 안)의 후보 머리 중 기존 머리와 세로로 안 겹치는 것을 채운다
+        for b in sorted(cands, key=lambda b: -b["conf"]):
+            if (b["class"].startswith("notehead") and b["conf"] >= 0.1
+                    and abs(cx(b) - cx(h["head"])) < sp * 0.5
+                    and top - sp * 4 < b["y"] + b["h"] / 2 < bot + sp * 4
+                    and all(abs(b["y"] + b["h"] / 2 - m["y"] - m["h"] / 2) > sp * 0.6 for m in col)):
+                col.append({k: b[k] for k in ("x", "y", "w", "h")})
+        for m in col[1:]:
             out.append({"class": HEAD.get(base, "notehead_filled"), **m})
     # 순서상 각 단위의 왼쪽 경계·오른쪽 경계(이웃 머리 사이)를 정한다
     xs = [cx(h["head"]) for h in heads]

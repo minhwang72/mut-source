@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 
-ROOT = "data/label_queue"
+ROOT = os.environ.get("LABEL_ROOT", "data/label_queue")
 BATCH = 4
 ORDER = {"불일치": 0, "짐작": 1, "자체수정": 2, "homr없음": 3}
 

@@ -548,6 +548,20 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
         except Exception:                                   # noqa: BLE001
             theirs = None
         extraction["crossCheck"] = crosscheck.merge(struct, theirs)
+        # **원조성은 단별 조표 중 하나여야 한다.** 단별 조표만 고치고 원조성을 두면
+        # 조옮김 기준이 틀린다(실측 t030-2: 단 전부 ♯4 로 고쳤는데 원조성은 F#,
+        # t001-2: 단은 ♭1·♯1 인데 원조성 ♭4). 어느 단과도 안 맞으면 첫 단 조표로.
+        fs = [s_.get("srcFifths") for s_ in struct["systems"]]
+        f = fs[0] if fs else None
+        if (not key_hint and isinstance(f, int) and all(isinstance(x, int) for x in fs)
+                and struct.get("sourceFifths") not in fs):
+            import guesskey
+            texts = [c["text"] for sysd in extraction["systems"]
+                     for c in sysd["chords"] if c.get("text")]
+            k_, conf_, _ = guesskey.guess_with_keysig(texts, f)
+            meta["key"] = extraction["meta"]["key"] = k_
+            extraction["keyGuess"] = {"key": k_, "confidence": conf_, "basis": "조표(교차 검증)"}
+            struct["sourceFifths"] = f
         sw.lap("교차검증")
     if homr_pool is not None:
         homr_pool.shutdown(wait=False)
@@ -568,9 +582,10 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
     import local_reader
     gate_issues = [struct["error"]] if struct.get("error") else []
     extraction["qualityGate"] = local_reader.quality_gate(extraction, gate_issues)
-    # **코드를 한 번 더 읽는다**(tools/chord_check) — 과금할 장에만(나머지는 어차피
-    # 과금하지 않는다). 두 판독이 다른 단은 확인 필요로 돌린다. 실패하면 과금 안 함.
-    if extraction["qualityGate"]["status"] == "ready":
+    # **코드를 한 번 더 읽는다**(tools/chord_check) — 과금할 장과 노란 표시 장에만
+    # (노란 장도 사용자에게 나간다 — 첫 판독만으로는 코드가 통째로 빠지기도 했다,
+    # 실측 t018-9 33개 중 1개). 두 판독이 다른 단은 확인 필요로 돌린다. 실패하면 과금 안 함.
+    if extraction["qualityGate"]["status"] in ("ready", "marked"):
         import chord_check
         try:
             extraction["chordCheck"] = chord_check.check(img, extraction, ink)
