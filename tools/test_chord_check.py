@@ -72,3 +72,22 @@ if __name__ == "__main__":
     test_refuse_when_place_or_root_disagrees(); test_align_strip_primary()
     print("ok")
 
+
+
+# ── 두 판독이 갈린 마디만 짚는다(마디 번호는 믿지 않고 일치한 코드 사이로) ──
+from types import SimpleNamespace as _NS
+import chord_check as _CC
+_g = {"left": 0, "right": 400, "bars": [100, 200, 300], "spacing": 10}
+_sd = {"measures": 4, "notes": []}
+_c = lambda t, x: {"text": t, "box": {"x": x - 5, "y": 0, "w": 10, "h": 10}}
+_ours = [_c("C", 50), _c("F", 150), _c("G", 250), _c("C", 350)]
+# 마디3 코드만 다르다 → 앞뒤로 일치한 코드(마디2·마디4) 사이 = 2~4
+assert _CC._disagree(_ours, [_NS(text=t) for t in ["C", "F", "Am", "C"]], _g, _sd) == [2, 3, 4]
+# 두 번째 판독만 읽은 코드가 끝에 있다 → 마지막 일치(마디4)부터 끝까지
+assert _CC._disagree(_ours, [_NS(text=t) for t in ["C", "F", "G", "C", "G"]], _g, _sd) == [4]
+_st = [{"system": 0, "measures": 4}]
+_CC._review(_st, 0, [3])
+assert _st[0]["review"] == [f"마디 3: {_CC.REVIEW}"]
+_CC._review(_st, 0, None)
+assert _CC.REVIEW in _st[0]["review"]
+print("ok disagree")

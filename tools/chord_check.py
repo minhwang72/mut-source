@@ -108,7 +108,9 @@ def read(strip, n: int, model: str = MODEL) -> list[SystemChords]:
     strip.save(buf, format="PNG")
     b64 = base64.standard_b64encode(buf.getvalue()).decode()
     resp = anthropic.Anthropic().messages.parse(
-        model=model, max_tokens=8000, thinking={"type": "adaptive"},
+        # 생각 토큰도 이 안에서 쓴다 — 8000 이면 55마디 장에서 잘렸다(실측 t048-4: 코드 재판독
+        # 실패 → 장 전체가 확인할 마디). 쓴 만큼만 비용이 든다
+        model=model, max_tokens=16000, thinking={"type": "adaptive"},
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
             {"type": "text", "text": PROMPT.format(n=n)}]}],
@@ -419,10 +421,87 @@ def align(ours: list[dict], theirs: list[ChordAt], geo: dict, ink, band, cw=None
     return out
 
 
-def _review(st: list[dict], k: int) -> None:
+def _review(st: list[dict], k: int, measures=None) -> None:
+    """확인 필요를 단다 — 마디를 알면 그 마디들만("마디 N: …"), 모르면 단 전체."""
     sys_ = next((s for s in st if s.get("system", -1) == k), None)
-    if sys_ is not None and REVIEW not in sys_.setdefault("review", []):
-        sys_["review"].append(REVIEW)
+    if sys_ is None:
+        return
+    rv = sys_.setdefault("review", [])
+    for msg in ([f"마디 {m}: {REVIEW}" for m in sorted(measures)] if measures else [REVIEW]):
+        if msg not in rv:
+            rv.append(msg)
+
+
+def _edges(g: dict, sysd: dict | None) -> list[float]:
+    """마디 경계 — web/rebuild.js measureEdges 와 같다(어긋난 막대선은 머리 사이로)."""
+    left = g.get("left", 0)
+    right = g.get("right", left)
+    raw = list(g.get("bars") or [])
+    bars = list(raw)
+    n = max(1, (sysd or {}).get("measures") or 1)
+    if len(bars) != n - 1 or not bars:
+        return [left, *bars, right]
+    lo: dict = {}
+    hi: dict = {}
+    for nn in (sysd or {}).get("notes") or []:
+        h = nn.get("head")
+        if not h:
+            continue
+        m = nn.get("measure")
+        lo[m] = min(lo.get(m, float("inf")), h["x"])
+        hi[m] = max(hi.get(m, float("-inf")), h["x"] + h.get("w", 0))
+    moved = False
+    for i in range(len(bars)):
+        a, b = hi.get(i + 1), lo.get(i + 2)
+        if a is None or b is None or a >= b:
+            continue
+        if bars[i] < a or bars[i] > b:
+            bars[i] = (a + b) / 2
+            moved = True
+    out = [left, *bars, right]
+    if moved and any(out[i] <= out[i - 1] for i in range(1, len(out))):
+        return [left, *raw, right]
+    return out
+
+
+def _measure_at(c: dict, e: list[float], sp: float, n: int) -> int:
+    """코드 글자 가운데가 놓인 마디(1부터) — web/rebuild.js assemble 과 같은 규칙"""
+    x = c["box"]["x"] + c["box"].get("w", 0) / 2
+    mi = 0
+    for i in range(len(e) - 1):
+        if x >= e[i] - sp * 0.5:
+            mi = i
+    return min(mi, n - 1) + 1
+
+
+def _disagree(ours: list[dict], theirs: list, g: dict, sysd: dict | None):
+    """
+    **두 판독이 갈린 마디.** 두 번째 판독의 마디 번호는 쓰지 않는다(fix_system 주석 —
+    하나 더 세는 일이 잦다). 코드 순서를 맞대어, 어긋난 구간 앞뒤로 **일치한 코드 사이**의
+    마디를 모두 돌려준다. 틀린 코드는 반드시 그 사이에 있으므로 놓치지 않는다.
+    마디를 못 정하면 None(단 전체).
+    """
+    from difflib import SequenceMatcher
+    if not g or not ours:
+        return None
+    e = _edges(g, sysd)
+    n = max(1, (sysd or {}).get("measures") or 1)
+    if len(e) - 1 != n:
+        return None
+
+    def mof(c):
+        return _measure_at(c, e, g.get("spacing") or 0, n)
+
+    a = [norm(c["text"]) for c in ours]
+    b = [norm(c.text) for c in theirs]
+    out: set[int] = set()
+    for tag, i1, i2, _, _ in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        lo = mof(ours[i1 - 1]) if i1 > 0 else 1
+        hi = mof(ours[i2]) if i2 < len(ours) else n
+        out |= set(range(lo, hi + 1))
+    return sorted(out) or None
 
 
 def check(img, extraction: dict, ink=None) -> dict:
@@ -451,6 +530,7 @@ def check(img, extraction: dict, ink=None) -> dict:
     hs = sorted(c["box"]["h"] for s in systems for c in s.get("chords") or [] if not c.get("dropped"))
     ch = hs[len(hs) // 2] if hs else None
     fixed: dict[int, list[dict]] = {}
+    bad_at: dict = {}                  # 세 번째 표가 갈린 코드의 마디(단별)
     for k in idx:
         if k not in reads:
             continue                     # 두 번째 판독이 그 단을 안 냈다 — 비교할 수 없다
@@ -469,7 +549,8 @@ def check(img, extraction: dict, ink=None) -> dict:
         if got is not None:
             fixed[k] = got
         else:
-            _review(st, k)
+            sysd_s = next((s for s in st if s.get("system", -1) == k), None)
+            _review(st, k, _disagree(ours, theirs, g, sysd_s))
             stat["diff"] += 1
     # **세 번째 표.** 두 판독의 글자가 다른 코드와 띠 판독만 읽은 코드는 그 자리만
     # 잘라 한 번 더 읽는다. 실측 t010-8 단1: 첫 판독 'E' 가 맞았는데 띠 판독이 윗단
@@ -487,10 +568,19 @@ def check(img, extraction: dict, ink=None) -> dict:
                 c["text"] = c.pop("was")
                 c.pop("recheck", None)
                 continue
+            # 셋이 다 다르다 — 그 코드가 놓인 마디만 확인 필요로
+            g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)
+            sysd_s = next((s for s in st if s.get("system", -1) == k), None)
+            n = max(1, (sysd_s or {}).get("measures") or 1)
+            e = _edges(g, sysd_s) if g else []
+            if k not in bad_at or bad_at[k] is not None:
+                bad_at[k] = ((bad_at.get(k) or set()) | {_measure_at(c, e, g.get("spacing") or 0, n)}
+                             if len(e) - 1 == n else None)
             fixed[k] = None
     for k, got in fixed.items():
         if got is None:
-            _review(st, k)
+            ms = bad_at.get(k)
+            _review(st, k, sorted(ms) if ms else None)
             stat["diff"] += 1
             continue
         g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)

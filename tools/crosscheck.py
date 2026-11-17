@@ -231,7 +231,8 @@ def _missing_measures(systems, ours_m, at, skipped, seq_t, stat) -> None:
         if (j - 1) not in back or (j + 1) not in back:
             continue
         si, mi = ours_m[back[j + 1]]
-        msg = "마디가 하나 빠졌을 수 있습니다 — 두 번째 판독기만 읽은 마디가 있습니다"
+        # 마디 번호를 붙여 화면이 그 마디를 짚게 한다(빠진 마디는 그 바로 앞)
+        msg = f"마디 {mi}: 앞에 마디가 하나 빠졌을 수 있습니다 — 두 번째 판독기만 읽은 마디가 있습니다"
         rv = systems[si].setdefault("review", [])
         if msg not in rv:
             rv.append(msg)

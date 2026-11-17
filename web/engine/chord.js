@@ -13,6 +13,7 @@ import {
   formatNote,
   parseAccidental,
   parseNote,
+  simplifyNote,
   transposeNote,
 } from "./pitch.js";
 
@@ -85,6 +86,14 @@ export function parseChord(input        )                     {
 
                                      
                     
+     
+                                                 
+                                               
+                                  
+     
+                       
+                                      
+                     
  
 
 export function formatChord(c             , opts                     = {})         {
@@ -93,11 +102,17 @@ export function formatChord(c             , opts                     = {})      
   return `${c.open}${root}${c.quality}${bass}${c.close}`;
 }
 
-export function transposeChord(c             , iv          )              {
+export function transposeChord(
+  c             ,
+  iv          ,
+  opts                                               = {},
+)              {
+  const fix = (n      ) =>
+    opts.simplify ? simplifyNote(n, !!opts.preferFlat) : n;
   return {
     ...c,
-    root: transposeNote(c.root, iv),
-    bass: c.bass ? transposeNote(c.bass, iv) : null,
+    root: fix(transposeNote(c.root, iv)),
+    bass: c.bass ? fix(transposeNote(c.bass, iv)) : null,
   };
 }
 
@@ -111,6 +126,13 @@ export function transposeChordText(
   opts                     = {},
 )         {
   const parsed = parseChord(input);
-  if (!parsed) return input;
-  return formatChord(transposeChord(parsed, iv), opts);
+  if (!parsed) {
+    // **베이스만 적은 코드**("G /A /B /C" 의 /A) — 베이스음만 옮긴다. 그대로 두면
+    // 키를 바꿔도 /A 가 남아 틀린 악보가 된다
+    const m = /^\s*\/\s*([A-G][#b♯♭]?)\s*$/.exec(input);
+    const bass = m ? parseChord(m[1]) : null;
+    if (bass) return "/" + formatChord(transposeChord(bass, iv, opts), opts);
+    return input;
+  }
+  return formatChord(transposeChord(parsed, iv, opts), opts);
 }

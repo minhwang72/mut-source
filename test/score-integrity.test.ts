@@ -83,7 +83,8 @@ test('CLI와 웹의 조립 결과가 동일하다 (새 정규 경로)', () => {
   const cli=JSON.parse(execFileSync('python3',['-c',
     'import sys,json; sys.path.insert(0,"tools"); import rebuild; d=json.load(sys.stdin); m,r=rebuild.assemble_data(d["struct"],d["geometry"],d["chords"]); print(json.dumps({"measures":m,"report":r}))'
   ],{input:JSON.stringify(data),encoding:'utf8'}));
-  assert.deepEqual(cli,assemble(data.struct,data.geometry,{}));
+  const {bases, ...web}=assemble(data.struct,data.geometry,{});   // bases 는 편집기용(브라우저 안에서만)
+  assert.deepEqual(cli,web);
   assert.equal(cli.measures[0].notes[0].pitch,'Bb4');
 });
 

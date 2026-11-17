@@ -88,18 +88,41 @@ export function splits(per, FULL_ = FULL) {
 }
 
 /**
- * **확인 권장 마디** — 짐작한 음표가 있거나 두 판독기가 갈린 마디(1부터 센 번호).
- * 노란색으로 그려 사용자가 원본과 한 번 비교하게 한다(server quality_gate 'marked').
+ * 판독기가 단 `review` 에 남긴 말을 화면 문구로. "마디 N:" 이 붙은 것은 그 마디,
+ * 아닌 것은 단 전체의 사유다(어느 마디인지 판독기도 모른다).
  */
-const SOFT_REVIEW = /^마디 (\d+): (두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독|붙임줄이 흐리게)/;
-export function flaggedMeasures(sysd) {
-  const out = new Set();
-  for (const r of (sysd.review || [])) {
-    const m = SOFT_REVIEW.exec(r);
-    if (m) out.add(Number(m[1]));
+const REVIEW_TEXT = [
+  [/두 판독이 다르게/, '리듬을 두 판독기가 다르게 읽었어요'],
+  [/음 높이가 두 판독/, '음 높이를 두 판독기가 다르게 읽었어요'],
+  [/임시표가 두 판독/, '임시표를 두 판독기가 다르게 읽었어요'],
+  [/붙임줄이 흐리게/, '붙임줄이 흐릿해요 — 이어지는지 확인해 주세요'],
+  [/앞에 마디가 하나 빠졌/, '바로 앞에 마디가 하나 빠졌을 수 있어요 — 원본에서 이 마디 앞을 봐 주세요'],
+  [/마디가 하나 빠졌/, '이 단에 마디가 하나 빠졌을 수 있어요'],
+  [/코드가 두 판독/, '코드를 두 번 읽은 결과가 달라요'],
+  [/교차 확인하지 못했/, '음 높이를 두 번째 판독기로 확인하지 못했어요'],
+  [/임시표/, '임시표가 어느 음표에 붙는지 확인이 필요해요'],
+  [/기존 개수 판독/, '판독기마다 음표 개수가 달라요'],
+];
+export function reviewText(raw) {
+  for (const [re, t] of REVIEW_TEXT) if (re.test(raw)) return t;
+  return String(raw).replace(/\s*—\s*원본 확인 필요$/, '');
+}
+
+/**
+ * 빔으로 묶인 음표가 8분 박 격자에서 안 끝나는 마디 — 붙임점 하나가 옆 음으로
+ * 옮겨 붙으면 마디 합은 그대로라 박자 검산을 통과한다(실측 day2conti-2).
+ * server/local_reader.broken_beam_groups 와 같은 기준이고, 마디 번호를 돌려준다.
+ */
+export function brokenBeamMeasures(sysd) {
+  const pos = {}, ends = new Map();
+  for (const n of (sysd.notes || [])) {
+    if (n.chord) continue;
+    const v = DUR[n.duration] ?? DUR.quarter;
+    pos[n.measure] = (pos[n.measure] || 0) + (n.dotted ? Math.floor(v * 3 / 2) : v);
+    const g = n.beamGroup;
+    if (Number.isInteger(g) && g >= 0 && !n.rest) ends.set(`${n.measure}:${g}`, [n.measure, pos[n.measure]]);
   }
-  for (const n of (sysd.notes || [])) if (n.guessed) out.add(n.measure);
-  return out;
+  return new Set([...ends.values()].filter(([, p]) => p % DUR.eighth).map(([m]) => m));
 }
 
 /** 박자 검산. 반환: {ok, over:[...], under:[...], splits:[...]} */
@@ -181,15 +204,21 @@ export function addBeams(notes) {
 export function chordsByStaff(systems, chordTexts) {
   const out = {};
   let ci = 0;
+  let last = null;                  // 바로 앞의 온전한 코드(베이스 뺀 것)
   (systems || []).forEach((sysd, i) => {
     const list = [];
     for (const c of (sysd.chords || [])) {
       if (c.dropped) continue;
+      // **베이스만 적은 코드("G /A /B /C")는 앞 코드에 붙인다** — G/A 와 같은 뜻이고,
+      // 근음 없이는 악보에 그릴 수 없다(실측 처음 보는 악보 33장 중 3장이 여기서 멈췄다)
+      let text = chordTexts[ci] ?? c.text;
+      const bassOnly = /^\s*\/\s*([A-G][#b♯♭]?)\s*$/.exec(text);
+      if (bassOnly && last) text = `${last}/${bassOnly[1]}`;
+      else if (/^[A-G]/.test(text)) last = text.split('/')[0];
       // **글자 가운데로 자리를 잡는다.** 긴 코드(Bbm/Db, B(sus4)/D#)는 다음 마디 첫 박
       // 위에 가운데 맞춰 찍혀 왼쪽 끝이 마디줄을 넘어온다 — 왼쪽 끝으로 재면 앞 마디에
       // 붙었다(실측 now0918-11·wish0809-6·t060-1, 과금 장 포함)
-      list.push({ text: chordTexts[ci] ?? c.text,
-                  x: c.box ? c.box.x + (c.box.w || 0) / 2 : 0 });
+      list.push({ text, x: c.box ? c.box.x + (c.box.w || 0) / 2 : 0, left: c.box?.x });
       ci += 1;
     }
     out[sysd.index ?? i] = list;
@@ -199,6 +228,51 @@ export function chordsByStaff(systems, chordTexts) {
       + '— 이조된 코드가 엉뚱한 마디에 붙을 수 있어 멈췄습니다');
   }
   return out;
+}
+
+/**
+ * 단의 마디 경계 [왼끝, 막대선…, 오른끝]. **막대선이 음표 머리와 어긋나면 머리에 맞춘다.**
+ *
+ * 막대선은 판독이 마디 수에 맞춰 고른 것이라 하나가 엉뚱한 데 잡히기도 한다(실측
+ * t009-3 단4: 첫 막대선이 조표 바로 뒤 x=222, 마디1 음표는 299~600). 그러면 코드가
+ * 옆 마디에 붙는다. 마디 번호는 음표가 들고 있으므로, 앞 마디 마지막 머리와 뒷 마디
+ * 첫 머리 사이에 없는 막대선만 그 가운데로 옮긴다. 개수가 안 맞거나 고친 뒤 순서가
+ * 꼬이면 손대지 않는다.
+ */
+export function measureEdges(sys, sysd) {
+  const left = sys.left ?? 0, right = sys.right ?? left;
+  const bars = Array.isArray(sys.bars) ? [...sys.bars] : [];
+  const n = Math.max(1, sysd?.measures || 1);
+  if (bars.length !== n - 1 || !bars.length) return [left, ...bars, right];
+  const lo = {}, hi = {};
+  for (const nn of (sysd.notes || [])) {
+    const h = nn.head;
+    if (!h) continue;
+    const m = nn.measure;
+    lo[m] = Math.min(lo[m] ?? Infinity, h.x);
+    hi[m] = Math.max(hi[m] ?? -Infinity, h.x + (h.w || 0));
+  }
+  let moved = false;
+  for (let i = 0; i < bars.length; i += 1) {
+    const a = hi[i + 1], b = lo[i + 2];
+    if (a == null || b == null || a >= b) continue;
+    if (bars[i] < a || bars[i] > b) { bars[i] = (a + b) / 2; moved = true; }
+  }
+  const out = [left, ...bars, right];
+  if (moved && out.some((x, i) => i && x <= out[i - 1])) return [left, ...sys.bars, right];
+  return out;
+}
+
+/** 마디 안 음표마다 시작 박(내부 단위). 화음 구성음은 바탕음과 같은 자리다. */
+function starts(notes) {
+  let acc = 0, at = 0;
+  return notes.map((nn) => {
+    if (nn.chord) return at;
+    at = acc;
+    const d = DUR[nn.duration] ?? DUR.quarter;
+    acc += nn.dotted ? Math.floor(d * 3 / 2) : d;
+    return at;
+  });
 }
 
 export function assemble(struct, geometry, chordsBySystem) {
@@ -235,6 +309,24 @@ export function assemble(struct, geometry, chordsBySystem) {
     return pitch != null && prevTies.has(pitch);
   };
 
+  // **확인할 마디.** 사람이 원본과 비교해 확인하거나 고칠 자리 — 단·쪽 전체를
+  // 막는 대신 마디로 좁힌다. 어느 마디인지 모르는 사유는 그 단의 마디 전부에
+  // 단다(wide). 사용자가 확인한 마디(sysd.confirmed)는 빼서, 화면이 다 확인됐는지
+  // 이것 하나로 안다. 그릴 수 없는 악보(높은음자리표 아님 등)는 blockers.
+  const full = fullOf(struct);
+  const checked = checkBeats(struct);
+  const flags = new Map();
+  const blockers = [];
+  const flag = (si, mi, text, wide = false) => {
+    if ((struct.systems[si]?.confirmed || []).includes(mi)) return;
+    const k = `${si}:${mi}`;
+    let f = flags.get(k);
+    if (!f) flags.set(k, f = { system: si, measure: mi, reasons: [] });
+    if (!f.reasons.some((r) => r.text === text)) f.reasons.push({ text, wide });
+  };
+  /** 판독이 정한 음높이 바탕(오선 위 자리) — 편집기가 올리고 내리는 출발점 */
+  const bases = new Map();
+
   struct.systems.forEach((sysd, si) => {
     const sys = systems[si];
     if (!sys) return;
@@ -249,8 +341,10 @@ export function assemble(struct, geometry, chordsBySystem) {
 
     // **쉼표는 머리를 소비하지 않는다.** 쉼표에 음높이를 붙이면 그 뒤
     // 음표들이 한 칸씩 밀려 멜로디 전체가 어긋난다.
-    const want = llm.filter((n) => !n.rest).length;
-    const anchored = llm.filter(n => !n.rest).every(n => n.head);
+    // 사람이 넣은 음표(머리 없이 음 자리만 있는 것)도 머리를 찾지 않는다.
+    const added = (n) => !!n.base && !n.head;
+    const want = llm.filter((n) => !n.rest && !added(n)).length;
+    const anchored = llm.filter(n => !n.rest).every(n => n.head || n.base);
     const unsafe = [];
     if (!llm.length) unsafe.push('이 단의 음악 구조를 읽지 못했습니다');
     if (!anchored && mine.length !== want) unsafe.push(`음표 수 불일치 (검출 ${mine.length}, 판독 ${want})`);
@@ -273,7 +367,7 @@ export function assemble(struct, geometry, chordsBySystem) {
     // (실측: 한 장에서 162개). 막대선이 이미 있으므로 **마디 안에서만**
     // 짝지으면 어긋남이 그 마디에 갇힌다.
     const mBars = Array.isArray(sys.bars) ? sys.bars : [];
-    const mEdges = [sys.left ?? 0, ...mBars, sys.right ?? (sys.left ?? 0)];
+    const mEdges = measureEdges(sys, sysd);
     const nMeas = Math.max(1, sysd.measures || 1);
     const measureOf = (x) => {
       let mi = 0;
@@ -289,30 +383,83 @@ export function assemble(struct, geometry, chordsBySystem) {
     const pitchBroken = unsafe.some((u) =>
       u.includes('음자리표') || u.includes('원조표') || u.includes('구조를 읽지'));
 
+    // ── 확인할 마디를 단다 ──
+    const clampM = (m) => Math.min(nMeas, Math.max(1, m || 1));
+    const allM = Array.from({ length: nMeas }, (_, i) => i + 1);
+    // 조건에 맞는 음표가 있는 마디. 없으면 어느 마디인지 모르므로 단 전체.
+    const where = (pred) => {
+      const s = [...new Set(llm.filter(pred).map((n) => clampM(n.measure)))];
+      return s.length ? s : allM;
+    };
+    const mark = (list, text) => list.forEach((m) => flag(si, m, text, list === allM));
+    const beatBad = [...checked.over, ...checked.under]
+      .filter(([s, m, v]) => s === si && !(sysd.pickups?.includes(m) && v < full / DUR.quarter))
+      .map(([, m]) => clampM(m));
+    const hasAcc = (n) => n.accidental != null || !!n.natural;
+    if (sys.clef && sys.clef !== 'G') blockers.push('높은음자리표가 아닌 악보는 아직 지원하지 않아요');
+    if (!Number.isInteger(srcFifths) || Math.abs(srcFifths) > 7) blockers.push('조표를 확인하지 못했어요');
+    if (!llm.length) {
+      // 코드만 적힌 줄(간주·전주)은 음표가 없는 게 맞다 — 그래도 한 번은 본다
+      mark(allM, (chordsBySystem[si] || []).length
+        ? '음표 없이 코드만 있는 단이에요 — 간주라면 그대로 두세요'
+        : '이 단의 음표를 읽지 못했어요');
+    }
+    if (llm.length && !anchored && mine.length !== want) {
+      // 마디마다 머리 수와 읽은 음표 수를 대 본다 — 다른 마디만
+      const diff = mBars.length ? allM.filter((m) =>
+        byMeasure[m - 1].length !== llm.filter((n) => !n.rest && !added(n) && clampM(n.measure) === m).length) : [];
+      mark(diff.length ? diff : allM, '찾은 음표 수와 읽은 음표 수가 달라요');
+    }
+    if (struct.unreliable?.stacked?.includes(si)) mark(where((n) => n.chord), '화음(동시에 울리는 음)이 있어요');
+    if (struct.unreliable?.slashOnly?.includes(si)) mark(allM, '음 높이 없이 리듬만 적힌 표기는 읽지 못했어요');
+    if (struct.unreliable?.accidentals?.includes(si)) mark(where(hasAcc), reviewText('임시표'));
+    for (const r of (sysd.review || [])) {
+      const m = /^마디 (\d+): (.+)$/.exec(r);
+      if (m) { flag(si, clampM(Number(m[1])), reviewText(m[2])); continue; }
+      if (r.startsWith('기존 개수 판독')) mark(beatBad.length ? beatBad : allM, reviewText(r));
+      else if (r.includes('교차 확인하지 못했')) mark(where((n) => !n.rest && !n.pos), reviewText(r));
+      else if (r.includes('임시표')) mark(where(hasAcc), reviewText(r));
+      else mark(allM, reviewText(r));
+    }
+    for (const n of llm) if (n.guessed) flag(si, clampM(n.measure), '박자를 맞추려고 음가를 짐작했어요');
+    for (const m of brokenBeamMeasures(sysd)) {
+      flag(si, clampM(m), '빔으로 묶인 음표의 박이 맞지 않아요 — 붙임점을 확인해 주세요');
+    }
+
     let k = 0;
     // **못 정한 음높이는 앞 음을 잇는다.** null 로 두면 변환 전체가 멈춘다
     // (assertResolved). 이어 쓴 자리는 missing 으로 세어 경고에 적히고,
-    // 저장·차감은 qualityGate 가 따로 막는다.
+    // 그 마디는 확인할 마디가 된다.
     let last = 'B4';
-    const pitches = llm.map((n) => {
+    const xs = llm.map(() => null);     // 음표마다 머리 x — 코드를 어느 음 위에 둘지
+    const pitches = llm.map((n, i) => {
       if (n.rest) { pitchState.tie = null; return null; }
-      const mi = Math.min(nMeas, Math.max(1, n.measure || 1)) - 1;
+      const mi = clampM(n.measure) - 1;
       let head = n.head;
-      if (!head && mBars.length) {
+      if (!head && !n.base && mBars.length) {
         // 막대선이 있으면 **그 마디 안에서만** 찾는다. 없으면 없는 대로 둔다 —
         // 순서대로 하나 끌어오면 다음 마디 머리를 당겨와 밀림이 다시 번진다.
         head = byMeasure[mi][cursor[mi]++];
-      } else if (!head) {
+      } else if (!head && !n.base) {
         head = mine[k];
       }
-      k += 1;
-      if (pitchBroken || !head) { missing += 1; pitchState.tie = null; return last; }
+      if (!added(n)) k += 1;
+      if (head) xs[i] = head.x + (head.w || 0) / 2;
+      if (pitchBroken || (!head && !n.base)) {
+        missing += 1; pitchState.tie = null;
+        if (!pitchBroken) flag(si, mi + 1, '음 높이를 정하지 못했어요');
+        return last;
+      }
       try {
-        last = sourcePitch(pitchOf(head, sys), n, srcFifths, pitchState, measureId(n.measure));
+        // 사람이 고친 음 자리(base)가 있으면 그것이 머리 좌표보다 앞선다
+        const base = n.base || pitchOf(head, sys);
+        bases.set(n, base);
+        last = sourcePitch(base, n, srcFifths, pitchState, measureId(n.measure));
         return last;
       } catch (err) {
         missing += 1;
         unresolved.push({system: si, measure: n.measure, reason: err.message});
+        flag(si, mi + 1, '음 높이를 정하지 못했어요');
         return last;
       }
     });
@@ -326,10 +473,12 @@ export function assemble(struct, geometry, chordsBySystem) {
       mismatch.push({ system: si, detected: mine.length, expected: want });
     }
 
-    const nmeas = Math.max(1, sysd.measures || 1);
+    const nmeas = nMeas;
     const buckets = Array.from({ length: nmeas }, () => []);
+    const idxs = Array.from({ length: nmeas }, () => []);
     llm.forEach((n, i) => {
-      const mi = Math.min(nmeas, Math.max(1, n.measure || 1)) - 1;
+      const mi = clampM(n.measure) - 1;
+      idxs[mi].push(i);
       buckets[mi].push({
         pitch: pitches[i], duration: n.duration,
         dotted: !!n.dotted, tie: !!n.tie, tie_stop: tieStop(n, pitches[i]),
@@ -348,29 +497,44 @@ export function assemble(struct, geometry, chordsBySystem) {
       if (n.tie && !n.rest && pitches[i] != null) curTies.add(pitches[i]);
     });
 
-    // 음표 k번째 → (마디, 마디 안 순서)
-    const flatPos = [];
-    buckets.forEach((notes, mi) => {
-      notes.forEach((nn, j) => { if (nn.pitch != null) flatPos.push([mi, j]); });
+    // **쉼표 자리를 앞뒤 음표 사이로 짐작한다.** 쉼표엔 머리가 없어 코드 자리를 잴 수
+    // 없었다 — 3박 쉼표 위 코드가 4박 음표에 붙었다(처음 보는 악보 대조: t023-6·t002-2·
+    // t012-4). 연달은 쉼표는 사이를 고르게 나눈다. 기준이 없으면 음표에서 3칸씩.
+    idxs.forEach((list, mi) => {
+      const run = [];
+      // 마디 안에서 앞(뒤) 음표가 없으면 마디줄을 기준으로 — 단 첫 마디 왼끝은 음자리표·
+      // 조표까지 품고 있어 쓰지 않는다
+      const flush = (next0) => {
+        if (!run.length) return;
+        const prev = run.prev ?? (mi > 0 ? mEdges[mi] : null);
+        const next = next0 ?? mEdges[mi + 1] ?? null;
+        run.forEach((i, t) => {
+          if (prev != null && next != null) xs[i] = prev + (next - prev) * (t + 1) / (run.length + 1);
+          else if (next != null) xs[i] = next - sys.spacing * 3 * (run.length - t);
+          else if (prev != null) xs[i] = prev + sys.spacing * 3 * (t + 1);
+          else xs[i] = (mEdges[mi] + (mEdges[mi + 1] ?? mEdges[mi])) / 2;
+        });
+        run.length = 0;
+      };
+      let last = null;
+      for (const i of list) {
+        if (llm[i].chord) continue;
+        if (xs[i] == null && llm[i].rest) { if (!run.length) run.prev = last ?? undefined; run.push(i); continue; }
+        if (xs[i] != null) { flush(xs[i]); last = xs[i]; }
+      }
+      flush(null);
     });
-    // 마디마다 첫머리부터의 누적 음가
-    const offsets = buckets.map((notes) => {
-      let acc = 0;
-      return notes.map((nn) => {
-        const cur = acc;
-        const d = DUR[nn.duration] ?? DUR.quarter;
-        acc += nn.dotted ? Math.floor(d * 3 / 2) : d;
-        return cur;
-      });
-    });
+
+    // 마디마다 첫머리부터의 누적 음가. **화음 구성음은 시간을 쓰지 않는다** —
+    // 바탕음과 같은 자리다.
+    const offsets = buckets.map(starts);
 
     // **코드를 막대선으로 잘린 마디 구간에 배정한다.**
     // 음표에 직접 붙이면 쉼표만 있는 마디의 코드가 갈 곳이 없어 다음 마디로
     // 몰린다(실측: 마커스 단0은 앞 4마디가 전부 쉼표라 코드 5개가 한 마디에
     // 쌓였다). 막대선은 서버가 LLM 마디 수에 맞춰 골라 보내 준다.
     const sp = sys.spacing;
-    const bars = Array.isArray(sys.bars) ? sys.bars : [];
-    const edges = [sys.left ?? 0, ...bars, sys.right ?? (sys.left ?? 0)];
+    const edges = mEdges;
     const chords = [...(chordsBySystem[si] || [])]
       .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
     const perMeasure = {};
@@ -380,11 +544,15 @@ export function assemble(struct, geometry, chordsBySystem) {
         if ((c.x ?? 0) >= edges[i] - sp * 0.5) mi = i;
       }
       mi = Math.min(mi, nmeas - 1);
-      let off = 0;
-      for (let idx = 0; idx < flatPos.length; idx += 1) {
-        const [mm, j] = flatPos[idx];
-        if (mm !== mi || idx >= mine.length) continue;
-        if (mine[idx].x >= (c.x ?? 0) - sp * 1.2) { off = offsets[mi][j]; break; }
+      // **코드 글자 왼쪽 끝 근처에서 가장 가까운 음표·쉼표의 박에 둔다.** 코드는 대개
+      // 음표 머리에 왼쪽을 맞춰 적는다 — 가운데로 재면 긴 코드(Bm7/E)가 다음 음표로
+      // 넘어가고, "가운데보다 오른쪽 첫 음표"로 재면 쉼표 위 코드가 다음 음표로 갔다.
+      // 가운데에 맞춰 적은 짧은 코드도 잡히도록 가운데와 (왼쪽+1칸) 중 왼쪽 것을 쓴다.
+      const at = c.left != null ? Math.min(c.x ?? 0, c.left + sp) : (c.x ?? 0);
+      let off = 0, best = Infinity;
+      for (let j = 0; j < idxs[mi].length; j += 1) {
+        const x = xs[idxs[mi][j]];
+        if (x != null && Math.abs(x - at) < best) { best = Math.abs(x - at); off = offsets[mi][j]; }
       }
       (perMeasure[mi] = perMeasure[mi] || []).push({ text: c.text, offset: off });
     }
@@ -397,11 +565,22 @@ export function assemble(struct, geometry, chordsBySystem) {
     // 반복 기호·볼타는 원래 마디 경계에 있다 — 코드 때문에 쪼갠 조각의
     // 처음/끝에 붙인다.
     const markBy = {};
-    for (const mk of (sysd.marks || [])) markBy[mk.measure] = mk;
-    const flagged = flaggedMeasures(sysd);
+    // **두 이름을 다 읽는다.** 지금 판독(readcounts)은 repeat_start 로 보내는데 여기는
+    // repeatStart 만 읽어서, 판독이 찾은 도돌이표가 한 번도 그려지지 않았다(처음 보는
+    // 악보 33장 중 19장에 65개). 괄호 번호 '1.'·'1.2.' 는 MusicXML 형식 '1'·'1, 2' 로.
+    for (const mk of (sysd.marks || [])) {
+      const volta = (String(mk.volta ?? '').match(/\d+/g) || []).join(', ');
+      markBy[mk.measure] = {
+        repeatStart: !!(mk.repeatStart ?? mk.repeat_start),
+        repeatEnd: !!(mk.repeatEnd ?? mk.repeat_end),
+        volta,
+      };
+    }
     buckets.forEach((notes0, mi) => {
-      if (!notes0.length) unresolved.push({system: si, measure: mi + 1,
-        reason: '읽은 음표·쉼표가 없어 원본 확인 필요'});
+      if (!notes0.length) {
+        unresolved.push({system: si, measure: mi + 1, reason: '읽은 음표·쉼표가 없어 원본 확인 필요'});
+        if (llm.length) flag(si, mi + 1, '이 마디의 음표를 읽지 못했어요');
+      }
       // **빈 마디는 온쉼표로 채운다.** 이건 못 그리는 게 아니라 못 읽은
       // 것이라, 그리기를 막을 이유가 없다 — 위에서 unresolved 로 기록해
       // 화면이 짚어 준다. unresolved 표시를 음표에 남기면 음높이를 못 정한
@@ -409,14 +588,18 @@ export function assemble(struct, geometry, chordsBySystem) {
       let notes = notes0.length ? notes0 : [{ pitch: null, duration: 'whole' }];
       const chs = (perMeasure[mi] || []).sort((a, b) => a.offset - b.offset);
       let cuts = [];
+      // **첫 코드가 마디 첫 박이 아니면 그 앞을 코드 없는 조각으로 뗀다.** 예전엔 코드가
+      // 하나뿐이면 박 자리를 버리고 마디 첫머리에 그렸다 — 3박·4박에 걸린 코드가
+      // 1박으로 갔다(처음 보는 악보 대조 t063-02 D/F# 5곳 등)
+      let lead = 0;
+      if (chs.length && chs[0].offset > 0 && notes.length > 1) {
+        let idx = starts(notes).findIndex((v) => v >= chs[0].offset);
+        while (idx > 0 && idx < notes.length && notes[idx].chord) idx += 1;
+        if (idx > 0 && idx < notes.length) lead = idx;
+      }
+      let even = false;
       if (chs.length > 1) {
-        let acc = 0;
-        const pos = notes.map((nn) => {
-          const cur = acc;
-          const d = DUR[nn.duration] ?? DUR.quarter;
-          acc += nn.dotted ? Math.floor(d * 3 / 2) : d;
-          return cur;
-        });
+        const pos = starts(notes);
         for (const c of chs.slice(1)) {
           const idx = pos.findIndex((v) => v >= c.offset);
           if (idx > 0 && idx < notes.length) cuts.push(idx);
@@ -424,11 +607,15 @@ export function assemble(struct, geometry, chordsBySystem) {
         cuts = [...new Set(cuts)].sort((x, y) => x - y);
         const need = chs.length - 1;
         if (cuts.length < need && notes.length > 1) {
+          even = true;
           // 두 코드가 같은 음표로 해석되면 자를 자리가 안 나온다 — 균등히 나눈다
           const nPc = Math.min(chs.length, notes.length);
           cuts = [...new Set(Array.from({ length: nPc - 1 },
             (_, i) => Math.round((i + 1) * notes.length / nPc))
             .filter((c) => c > 0 && c < notes.length))].sort((x, y) => x - y);
+          // 화음 구성음 앞에서 자르면 바탕음과 갈라진다 — 뒤로 민다
+          cuts = [...new Set(cuts.map((c) => { while (c < notes.length && notes[c].chord) c += 1; return c; })
+            .filter((c) => c < notes.length))];
         } else if (cuts.length < need && notes.length === 1
                    && notes[0].pitch == null && chs.length === 2
                    && HALVE[notes[0].duration]) {
@@ -440,6 +627,8 @@ export function assemble(struct, geometry, chordsBySystem) {
         }
       }
 
+      if (lead && !even && !cuts.includes(lead)) cuts = [lead, ...cuts].sort((x, y) => x - y);
+      else lead = 0;
       const pieces = [];
       let start = 0;
       for (const cut of cuts) { pieces.push(notes.slice(start, cut)); start = cut; }
@@ -450,13 +639,14 @@ export function assemble(struct, geometry, chordsBySystem) {
       const mk = markBy[mi + 1] || {};
       use.forEach((pc, pi) => {
         addBeams(pc);
-        const m = { notes: pc };
-        if (flagged.has(mi + 1)) m.flag = true;
+        // src: 원래 (단, 마디) — 화면이 그린 마디를 눌러 고칠 때 되짚는다
+        const m = { notes: pc, src: [si, mi + 1] };
         if (mi === 0 && pi === 0) m.newSystem = true;
         // **단별 원조 조표(전조).** 구조 데이터가 주면 실어 둔다 —
         // 목표 조표로 옮기는 것은 redraw 가 한다(간격 차이를 더한다).
         if (sysd.srcFifths != null) m.srcFifths = Number(sysd.srcFifths);
-        if (pi < chs.length) { m.chords = [chs[pi].text]; chordsKept += 1; }
+        const ci = pi - (lead ? 1 : 0);
+        if (ci >= 0 && ci < chs.length) { m.chords = [chs[ci].text]; chordsKept += 1; }
         if (pi === 0) {
           if (mk.repeatStart) m.repeatStart = true;
           if (mk.volta) m.voltaStart = mk.volta;
@@ -468,8 +658,8 @@ export function assemble(struct, geometry, chordsBySystem) {
         if (pi < use.length - 1) m.noRightBar = true;
         measures.push(m);
       });
-      if (chs.length > use.length) {
-        const extra = chs.slice(use.length).map((c) => c.text);
+      if (chs.length > use.length - (lead ? 1 : 0)) {
+        const extra = chs.slice(use.length - (lead ? 1 : 0)).map((c) => c.text);
         const m = measures[measures.length - 1];
         m.chords = (m.chords || []).concat(extra);
         chordsKept += extra.length;
@@ -483,11 +673,12 @@ export function assemble(struct, geometry, chordsBySystem) {
 
   // Beat validation is a rejection signal, not a recipe for inventing durations.
   // Explicit pickups may be short; split measures were already paired above.
-  const checked = checkBeats(struct);
   for (const [si, mi, beats] of [...checked.over, ...checked.under]) {
-    if (struct.systems[si]?.pickups?.includes(mi) && beats < fullOf(struct) / DUR.quarter) continue;
+    if (struct.systems[si]?.pickups?.includes(mi) && beats < full / DUR.quarter) continue;
     unresolved.push({system: si, measure: mi,
-      reason: `음가 합 ${beats}박 — 기준 ${fullOf(struct) / DUR.quarter}박과 달라 원본 확인 필요`});
+      reason: `음가 합 ${beats}박 — 기준 ${full / DUR.quarter}박과 달라 원본 확인 필요`});
+    const n = struct.systems[si]?.measures || 1;
+    flag(si, Math.min(n, Math.max(1, mi)), `박자 합이 ${+beats.toFixed(2)}박이에요 (한 마디 ${full / DUR.quarter}박)`);
   }
   return {
     measures,
@@ -495,6 +686,9 @@ export function assemble(struct, geometry, chordsBySystem) {
       notes: total, missingPitch: missing, mismatch, unresolved,
       systems: struct.systems.length, measures: measures.length,
       chords: chordsKept,
+      flags: [...flags.values()].sort((a, b) => (a.system - b.system) || (a.measure - b.measure)),
+      blockers: [...new Set(blockers)],
     },
+    bases,
   };
 }

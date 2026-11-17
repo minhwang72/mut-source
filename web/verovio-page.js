@@ -89,6 +89,33 @@ export function staffRows(svgText) {
 }
 
 /**
+ * 그린 마디마다 상자(SVG 좌표). 순서는 MusicXML 마디 순서와 같다 —
+ * assemble 이 단 끝에서 나눈 조각도 하나씩이다.
+ *
+ * 오선 다섯 줄의 가로 범위가 그 마디의 자리다(Verovio 는 마디마다 오선을 따로
+ * 긋는다). 위로는 코드 줄, 아래로는 아래 덧줄까지 잡아 손가락으로 누르기 쉽게 한다.
+ */
+export function measureBoxes(svgText) {
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  const out = [];
+  for (const mEl of doc.querySelectorAll('g.measure:not(.bounding-box)')) {
+    const { tx, ty } = originOf(mEl);
+    const xs = [], ys = [];
+    for (const el of mEl.querySelectorAll('g.staff:not(.bounding-box) > path')) {
+      for (const mm of (el.getAttribute('d') || '').matchAll(/[ML]\s*(-?[\d.]+)\s+(-?[\d.]+)/g)) {
+        xs.push(parseFloat(mm[1]) + tx);
+        ys.push(parseFloat(mm[2]) + ty);
+      }
+    }
+    if (!xs.length) { out.push(null); continue; }
+    const top = Math.min(...ys), bot = Math.max(...ys), sp = (bot - top) / 4;
+    out.push({ x: Math.min(...xs), w: Math.max(...xs) - Math.min(...xs),
+               y: top - sp * 3.4, h: bot - top + sp * 4.6 });
+  }
+  return out;
+}
+
+/**
  * **원본의 비율을 그대로 재현한다.**
  *
  * 원본을 폭 pageW로 늘렸다고 보고 오선 간격과 단 간격을 맞춘다. Verovio의
@@ -115,6 +142,10 @@ export async function renderFitted(xml, src, opts = {}) {
       header: 'none', footer: 'none',
       // **마디 번호를 찍지 않는다.** 원본 콘티 악보에는 없다.
       mnumInterval: 0,
+      // **마지막 단도 원본처럼 편다.** Verovio 는 마지막 단이 제 폭의 80% 가 안 되면
+      // 펴지 않는다 — 원본은 꽉 찼는데 우리만 반쪽이 되어, 원본 자리에 붙인 가사가
+      // 음표 없는 빈 곳에 놓였다(t001-2·t002-2·t063-02 마지막 단)
+      minLastJustification: opts.justifyLast ? 0 : 0.8,
     };
     if (sysSpace != null) o.spacingSystem = sysSpace;
     tk.setOptions(o);
@@ -133,25 +164,29 @@ export async function renderFitted(xml, src, opts = {}) {
     const wantSp = src.spacing * f;
     const wantGap = src.gap * f;
     const scale = got > 0 ? BASE * wantSp / got : BASE;
-    let sysSpace = Math.max(3, Math.min(24, wantGap / wantSp));
+    let sysSpace = Math.max(3, Math.min(48, wantGap / wantSp));
     svg = draw(scale, sysSpace);
 
     // **단 간격도 재고 한 번 더 그린다.** `spacingSystem` 이 그대로 px 로
     // 나오지 않는다 — 230 을 요청해 207 이 나왔고, 그 23px 때문에 앞 단
     // 가사와 다음 단 구간 표시(「Verse 2」)가 겹쳤다. 배율을 잡을 때와
     // 같은 방법으로 **재서 고친다** — 가장 좁은 간격을 기준으로 한다.
-    const r1 = staffRows(svg);
-    if (r1.length > 1) {
+    // 한 번으로는 안 맞는다 — Verovio 간격은 단 사이 내용물(코드·괄호) 기준이라
+    // 비례로 고쳐도 모자란다(t031-3: 288 → 324, 목표 356). 세 번까지 다시 잰다.
+    for (let it = 0; it < 3; it += 1) {
+      const r1 = staffRows(svg);
+      if (r1.length < 2) break;
       const k1 = viewScale(svg, pageW);
       let gotGap = Infinity;
       for (let i = 0; i < r1.length - 1; i += 1) {
         gotGap = Math.min(gotGap, (r1[i + 1].staffTop - r1[i].staffBottom) * k1);
       }
-      if (gotGap > 0 && Number.isFinite(gotGap)
-          && Math.abs(gotGap - wantGap) > wantSp * 0.25) {
-        sysSpace = Math.max(3, Math.min(24, sysSpace * wantGap / gotGap));
-        svg = draw(scale, sysSpace);
-      }
+      if (!(gotGap > 0 && Number.isFinite(gotGap))
+          || Math.abs(gotGap - wantGap) <= wantSp * 0.25) break;
+      const next = Math.max(3, Math.min(48, sysSpace * wantGap / gotGap));
+      if (Math.abs(next - sysSpace) < 0.05) break;
+      sysSpace = next;
+      svg = draw(scale, sysSpace);
     }
 
     // **내용이 페이지보다 길면 페이지를 늘린다.**

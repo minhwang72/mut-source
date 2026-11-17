@@ -15,6 +15,7 @@ import {
   transposeNote,
 } from "./pitch.js";
 import {
+  fifths,
            
             
   accidentalCount,
@@ -106,7 +107,15 @@ export function transposeChords(
   plan               ,
   opts                     = {},
 )           {
-  return chords.map((c) => transposeChordText(c, plan.interval, opts));
+  // **여기서는 표기를 손대지 않는다.** 이조는 수학적으로 뒤집을 수 있어야
+  // 하는데(왕복 불변), E#→F 같은 실용 표기 보정은 그 성질을 깬다
+  // (실측: F#m7b5 를 왕복시키면 Gbm7b5 가 됐다).
+  // 실용 표기는 **보여주기 직전**에 cli 층에서 적용한다.
+  // 목표 조성이 ♭조성이면 ♭쪽을 고르도록 기본값만 채워 준다.
+  const preferFlat = fifths(plan.toKey) < 0;
+  return chords.map((c) =>
+    transposeChordText(c, plan.interval, { preferFlat, ...opts }),
+  );
 }
 
 /** 음이름 목록 이조 (멜로디) */

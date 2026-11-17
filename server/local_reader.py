@@ -466,19 +466,6 @@ def broken_beam_groups(struct: dict) -> int:
     return bad
 
 
-# 확인만 하면 되는 사유 — 마디는 그려졌고 어느 쪽인지 사람이 보면 된다
-SOFT = re.compile(r"^(박자를 맞추려고 음가 \d+군데를 짐작|단 \d+: 마디 \d+: "
-                  r"(두 판독이 다르게|음 높이가 두 판독|임시표가 두 판독|붙임줄이 흐리게)"
-                  # 코드 재판독이 달랐다(tools/chord_check) — 음표는 그대로 쓸 수 있다
-                  r"|단 \d+: 코드가 두 판독"
-                  # 오선이 5줄로 안 잡혀 homr 대조를 못 한 단(server/serve.py)
-                  r"|단 \d+: 음 높이를 교차 확인하지 못했)")
-
-
-def _soft(msg: str) -> bool:
-    return bool(SOFT.match(msg))
-
-
 def quality_gate(extraction: dict, issues: list[str]) -> dict:
     """
     **박자 합으로 품질을 주장하지 않는다.** 브라우저가 실제로 쓰는 조립
@@ -504,6 +491,9 @@ def quality_gate(extraction: dict, issues: list[str]) -> dict:
     # **들어온 것은 안내, 여기서 찾은 것은 차단**이라는 출처로 가른다.
     notes = list(issues)
     found: list[str] = []
+    # **장 전체를 못 내주는 것**만 따로 센다 — 나머지는 확인할 마디로 좁혀 내준다
+    hard: list[str] = []
+    flags: list[dict] = []
 
     # **찍은 음표가 있으면 돈을 받지 않는다.**
     #
@@ -555,12 +545,15 @@ def quality_gate(extraction: dict, issues: list[str]) -> dict:
         # 낫다 — 검사를 통과하지 못하므로 크레딧도 차감되지 않는다.
         found.append("두 성부가 한 오선에 겹친 악보(합창·2부)는 아직 "
                      "지원하지 않습니다. 멜로디 한 줄짜리 악보를 올려 주세요")
+        hard.append(found[-1])
 
     if struct.get("error") or not struct.get("systems"):
         found.append("음표 구조가 없어 다시 그릴 수 없습니다")
+        hard.append(found[-1])
     elif len(struct["systems"]) != len(geo.get("systems") or []):
         found.append(f"단 수가 다릅니다 (구조 {len(struct['systems'])} vs "
                      f"오선 {len(geo.get('systems') or [])})")
+        hard.append(found[-1])
     else:
         chords = {str(s["index"]): [{"text": c["text"], "x": c["box"]["x"]}
                                     for c in s["chords"]]
@@ -574,8 +567,14 @@ def quality_gate(extraction: dict, issues: list[str]) -> dict:
             )
             if proc.returncode != 0:
                 found.append(f"구조 검증 실패: {proc.stderr.strip()[:120]}")
+                hard.append(found[-1])
             else:
                 rep = json.loads(proc.stdout)["report"]
+                # 화면이 노랗게 칠하고 사용자가 하나씩 확인하는 마디(web/rebuild.js)
+                flags = rep.get("flags") or []
+                for b in rep.get("blockers") or []:
+                    found.append(b)
+                    hard.append(b)
                 # **간주 줄은 오류가 아니다.** 콘티에는 멜로디 없이 코드만
                 # 적힌 줄이 있다(간주·전주). 음표가 없는 게 맞는데 게이트는
                 # "읽은 음표·쉼표가 없어 원본 확인 필요"로 막는다.
@@ -601,16 +600,25 @@ def quality_gate(extraction: dict, issues: list[str]) -> dict:
                     found.append(f"음높이를 정하지 못한 음표 {rep['missingPitch']}개")
         except Exception as e:                    # noqa: BLE001
             found.append(f"구조 검증 실패: {e}"[:160])
+            hard.append(found[-1])
 
-    # **노란 마디로 내준다.** 막힌 이유가 '짐작'·'두 판독기 불일치'뿐이면 다시
-    # 그리기는 됐고 확인할 마디만 남았다. 그 마디를 노란색으로 그려 저장은
-    # 열어 주되, 돈은 받지 않는다(jobs 는 'ready' 일 때만 차감한다).
-    # 105장 실측: 완전 통과 29장 + 노란 마디로 내줄 수 있는 장 17장.
-    if found and all(_soft(f) for f in found):
+    # **확인할 마디로 내준다.** 막힌 사유를 마디(모르면 그 단의 마디 전부)로
+    # 좁힐 수 있으면 다시 그리기는 된 것이다. 그 마디를 노랗게 짚어 사용자가
+    # 원본과 비교·수정하고, 다 확인하면 저장된다. 돈은 받지 않는다(jobs 는
+    # 'ready' 일 때만 차감한다). 처음 보는 악보 33장(o9): 장 전체를 막아야 하는
+    # 것은 1장뿐이었고 나머지는 전부 마디·단으로 좁혀졌다.
+    #
+    # 사유는 있는데 짚을 마디가 없으면 확인할 방법이 없으므로 막는다.
+    if hard or (found and not flags):
+        status = "needs_review"
+    elif found or flags:
         status = "marked"
     else:
-        status = "ready" if not found else "needs_review"
+        status = "ready"
     return {"status": status,
+            "flagged": [[f["system"], f["measure"]] for f in flags][:400],
+            # 장 전체를 막은 사유 — 화면이 "왜 저장이 안 되나"에 이것만 적는다
+            "hard": hard[:10],
             # 화면은 둘을 나눠 보여 준다. issues 는 예전 이름이라 남긴다.
             "blocking": found[:40],
             "notes": notes[:40],

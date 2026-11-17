@@ -268,11 +268,24 @@
     </div>
   </div>
   <div class="sheet-wrap">
-    <canvas id="out"></canvas>
+    <div class="sheet-stage">
+      <canvas id="out"></canvas>
+      <div class="mlayer" id="mlayer"></div>
+    </div>
   </div>
 
+  <!-- 확인할 마디 진행 — 악보를 내리는 동안 아래에 붙어 있다 -->
+  <div class="review" id="review" hidden>
+    <div class="review-text">
+      <strong id="rv-title"></strong>
+      <span id="rv-sub"></span>
+    </div>
+    <button id="rv-go" class="btn primary sm"></button>
+    <div class="rv-track" aria-hidden="true"><div id="rv-fill"></div></div>
+  </div>
+  <p class="sheet-tip" id="sheet-tip" hidden>마디를 누르면 원본과 나란히 보며 고칠 수 있어요</p>
+
   <div class="alert" id="res-warn" hidden></div>
-  <div id="fix-beats"></div>
   <p id="credit-notice" class="credit-notice" role="status"></p>
 
   <div class="row col">
@@ -284,6 +297,99 @@
   <p class="fineprint">개인 연습용 · 재배포 금지</p>
   <p class="fineprint" id="copyright-line"></p>
 </section>
+
+<!-- 마디 고치기. 원본 조각과 지금 읽은 모습을 원래 키로 나란히 보며 음표·코드·마디를 고친다
+     (web/measure-edit.js) -->
+<dialog id="medit" class="medit" aria-labelledby="me-title">
+  <div class="me-sheet">
+    <header class="me-head">
+      <div class="me-head-t">
+        <p class="me-count" id="me-count"></p>
+        <h2 id="me-title"></h2>
+      </div>
+      <div class="me-nav">
+        <button id="me-prev" class="icon-btn" type="button" aria-label="앞의 확인할 마디"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5 8 12l6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button id="me-next" class="icon-btn" type="button" aria-label="다음 확인할 마디"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5 16 12l-6.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button id="me-close" class="icon-btn" type="button" aria-label="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </header>
+
+    <div class="me-body">
+      <ul class="me-why" id="me-why"></ul>
+
+      <div class="me-compare">
+        <figure class="me-fig">
+          <figcaption>원본</figcaption>
+          <div class="me-paper"><canvas id="me-crop"></canvas></div>
+          <p class="me-note" id="me-crop-note"></p>
+        </figure>
+        <figure class="me-fig">
+          <figcaption>지금 읽은 모습 <span class="me-cap-sub">원래 키</span><output id="me-beats" class="me-beats"></output></figcaption>
+          <div class="me-paper me-svg" id="me-prev-svg"></div>
+        </figure>
+      </div>
+
+      <section class="me-sec" aria-labelledby="me-h-notes">
+        <h3 id="me-h-notes">음표</h3>
+        <div class="me-notes" id="me-notes"></div>
+
+        <div id="me-tools" class="me-tools">
+          <div class="me-row">
+            <span class="me-lab">음 높이</span>
+            <div class="me-grp">
+              <button id="me-down" class="tool" type="button" aria-label="한 칸 내리기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5 12 16l6-6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>내리기</span></button>
+              <button id="me-up" class="tool" type="button" aria-label="한 칸 올리기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 14.5 12 8l6 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>올리기</span></button>
+            </div>
+            <div class="segs" id="me-acc" role="group" aria-label="임시표"></div>
+          </div>
+          <div class="me-row">
+            <span class="me-lab">길이</span>
+            <div class="segs" id="me-len" role="group" aria-label="길이"></div>
+            <button id="me-dot" class="tool" type="button" aria-pressed="false">점</button>
+          </div>
+          <div class="me-row">
+            <span class="me-lab">표기</span>
+            <button id="me-rest" class="tool" type="button" aria-pressed="false">쉼표</button>
+            <button id="me-tie" class="tool" type="button" aria-pressed="false">다음 음과 붙임줄</button>
+          </div>
+          <div class="me-row">
+            <span class="me-lab">편집</span>
+            <button id="me-before" class="tool" type="button">＋ 앞에 음표</button>
+            <button id="me-after" class="tool" type="button">＋ 뒤에 음표</button>
+            <button id="me-member" class="tool" type="button">＋ 화음 음</button>
+            <button id="me-del" class="tool danger" type="button">지우기</button>
+          </div>
+        </div>
+        <div id="me-first" class="me-row" hidden>
+          <button id="me-first-note" class="tool" type="button">＋ 음표 넣기</button>
+          <button id="me-first-rest" class="tool" type="button">＋ 온쉼표 넣기</button>
+        </div>
+      </section>
+
+      <section class="me-sec" aria-labelledby="me-h-chords">
+        <h3 id="me-h-chords">코드</h3>
+        <div class="me-chords" id="me-chords"></div>
+      </section>
+
+      <details class="me-sec me-more">
+        <summary>마디가 빠졌거나 두 마디가 붙어 있나요?</summary>
+        <div class="me-row">
+          <button id="me-insert" class="tool" type="button">앞에 빈 마디 넣기</button>
+          <button id="me-split" class="tool" type="button">고른 음표부터 다음 마디로</button>
+          <button id="me-drop" class="tool danger" type="button">이 마디 지우기</button>
+        </div>
+      </details>
+    </div>
+
+    <footer class="me-foot">
+      <button id="me-undo" class="btn outline sm" type="button">되돌리기</button>
+      <span class="me-keys">← → 음표 · ↑ ↓ 음 높이 · 1–5 길이 · . 점</span>
+      <button id="me-ok-sys" class="btn outline" type="button" hidden></button>
+      <button id="me-ok" class="btn primary" type="button">원본과 같아요</button>
+    </footer>
+  </div>
+</dialog>
+
 
 <!-- ───────────── 계정 (두 번째 화면) ───────────── -->
 <section id="s-login" class="screen narrow" hidden>

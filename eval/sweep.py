@@ -33,8 +33,10 @@ for name in PAGES:
         ex = serve.read_sheet(open(f"{DIR}/{name}.png", "rb").read(), None)
         g = ex["qualityGate"]
         st = ex.get("struct") or {}
+        # ex: 화면 개발·재채점용 판독 결과 전체(오선 좌표·코드 포함, 로컬에만 남는다)
         json.dump({"struct": st, "gate": g, "cross": ex.get("crossCheck"),
-                   "chordCheck": ex.get("chordCheck")},
+                   "chordCheck": ex.get("chordCheck"),
+                   "ex": {k: v for k, v in ex.items() if k != "struct"}},
                   open(f"{SDIR}/{name}.json", "w"),
                   ensure_ascii=False)
         blk = list(g.get("blocking") or [])

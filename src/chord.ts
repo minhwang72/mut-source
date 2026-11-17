@@ -126,6 +126,13 @@ export function transposeChordText(
   opts: FormatChordOptions = {},
 ): string {
   const parsed = parseChord(input);
-  if (!parsed) return input;
+  if (!parsed) {
+    // **베이스만 적은 코드**("G /A /B /C" 의 /A) — 베이스음만 옮긴다. 그대로 두면
+    // 키를 바꿔도 /A 가 남아 틀린 악보가 된다
+    const m = /^\s*\/\s*([A-G][#b♯♭]?)\s*$/.exec(input);
+    const bass = m ? parseChord(m[1]) : null;
+    if (bass) return "/" + formatChord(transposeChord(bass, iv, opts), opts);
+    return input;
+  }
   return formatChord(transposeChord(parsed, iv, opts), opts);
 }

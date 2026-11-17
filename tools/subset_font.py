@@ -27,7 +27,7 @@ SRC = ROOT / "web/vendor/PretendardVariable.woff2"
 UI = ROOT / "web/vendor/pretendard-ui.woff2"
 KO = ROOT / "web/vendor/pretendard-ko.woff2"
 CSS = ROOT / "web/vendor/pretendard.css"
-SCAN = ["web/index.html", "web/app.js", "web/redraw.js", "web/fixbeats.js",
+SCAN = ["web/index.html", "web/app.js", "web/redraw.js", "web/measure-edit.js", "web/rebuild.js",
         "web/verovio-page.js", "web/sheet-render.js", "web/service.js",
         "web/musicxml.js", "web/source-pitch.js",
         "server/serve.py", "server/local_reader.py", "server/jobs.py",

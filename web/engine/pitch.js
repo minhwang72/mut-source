@@ -114,6 +114,48 @@ export function transposeNote(note      , iv          )       {
 }
 
 /**
+ * **실용 표기로 고친다.** 온음계 이조는 이론상 옳은 표기를 내지만, 조성에
+ * 속하지 않는 코드(Bb장조의 F#m7 같은 차용화음)를 옮기면 실제 악보에서
+ * 쓰지 않는 이름이 나온다 — 실측: Bb → A 이조에서 F#m7 이 `E#m7` 이 됐다.
+ * 겹임시표(##, bb)와 E#·B#·Fb·Cb 는 같은 소리의 흔한 이름으로 바꾼다.
+ *
+ * 방향은 목표 조성을 따른다. ♯ 조성이면 ♯쪽, ♭ 조성이면 ♭쪽을 고른다.
+ * 그래야 조표와 코드 표기가 어긋나지 않는다.
+ */
+const SHARP_NAMES                     = [
+  [0, 0], [0, 1], [1, 0], [2, -1], [2, 0], [3, 0],
+  [3, 1], [4, 0], [4, 1], [5, 0], [5, 1], [6, 0],
+];
+const FLAT_NAMES                     = [
+  [0, 0], [1, -1], [1, 0], [2, -1], [2, 0], [3, 0],
+  [4, -1], [4, 0], [5, -1], [5, 0], [6, -1], [6, 0],
+];
+
+/** 실제 악보에서 거의 쓰지 않는 표기인가 */
+export function isAwkward(note      )          {
+  if (Math.abs(note.alter) >= 2) return true;
+  // 글자 번호는 C=0 D=1 E=2 F=3 G=4 A=5 B=6 이다.
+  // 흔히 쓰지 않는 것은 E#(2,+1) B#(6,+1) Fb(3,-1) Cb(0,-1) 넷뿐이다.
+  // (G#·F#·Bb 같은 것은 정상 표기이므로 건드리면 안 된다 —
+  //  실측: 잘못 잡아서 F#m7b5 가 Gbm7b5 로 바뀌어 테스트가 깨졌다.)
+  if (note.alter === 1 && (note.letter === 2 || note.letter === 6)) return true;
+  if (note.alter === -1 && (note.letter === 3 || note.letter === 0)) return true;
+  return false;
+}
+
+/** 어색한 표기만 같은 소리의 흔한 이름으로 바꾼다. 아니면 그대로. */
+export function simplifyNote(note      , preferFlat         )       {
+  if (!isAwkward(note)) return note;
+  const table = preferFlat ? FLAT_NAMES : SHARP_NAMES;
+  const [letter, alter] = table[mod(pitchClass(note), 12)];
+  // 옥타브는 소리를 유지하도록 다시 맞춘다
+  const target = midi(note);
+  const natural = LETTER_SEMITONE[letter] + alter;
+  const octave = Math.round((target - natural) / 12) - 1;
+  return { letter, alter, octave };
+}
+
+/**
  * 두 음 사이의 음정. 옥타브를 무시하고 "위로 향하는" 최소 음정을 구한다
  * (동음이면 0). 조성 이조에서 쓰는 형태.
  */

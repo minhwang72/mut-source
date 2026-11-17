@@ -86,3 +86,61 @@ console.log('ok');
   const got = chordsByStaff([{ index: 0, chords: [{ text: 'Bbm/Db', box: { x: 895, w: 150 } }] }], ['Bbm/Db']);
   assert.strictEqual(got[0][0].x, 970);
 }
+
+// ── 확인할 마디(report.flags)와 사람이 고친 음 자리(base) ──
+{
+  const { assemble } = await import('./rebuild.js');
+  const h = (x, cy = 115) => ({ x, y: cy - 3, w: 8, h: 6 });
+  const q = (measure, x, extra = {}) => ({ measure, duration: 'quarter', dotted: false, rest: false,
+    tie: false, head: h(x), ...extra });
+  const geo = { systems: [{ staffTop: TOP, staffBottom: BOT, spacing: SP, left: 0, right: 400,
+    lineSpans: [], bars: [200] }], heads: [] };
+  const four = (m, x0) => [0, 1, 2, 3].map((i) => q(m, x0 + i * 40));
+
+  // 마디2 가 3박 → 그 마디만 확인할 마디. 사유는 박자
+  const st = { beats: 4, sourceFifths: 0, systems: [{ measures: 2,
+    notes: [...four(1, 20), ...four(2, 220).slice(0, 3)] }] };
+  let r = assemble(st, geo, {}).report;
+  assert.deepStrictEqual(r.flags.map((f) => [f.system, f.measure]), [[0, 2]]);
+  assert.match(r.flags[0].reasons[0].text, /박자 합이 3박/);
+
+  // 사람이 확인하면 빠진다
+  st.systems[0].confirmed = [2];
+  r = assemble(st, geo, {}).report;
+  assert.deepStrictEqual(r.flags, []);
+  delete st.systems[0].confirmed;
+
+  // "마디 N:" 사유는 그 마디만, 마디를 모르는 사유는 단 전체(wide)
+  st.systems[0].notes.push(q(2, 340));
+  st.systems[0].review = ['마디 1: 음 높이가 두 판독에서 다릅니다 — 원본 확인 필요'];
+  r = assemble(st, geo, {}).report;
+  assert.deepStrictEqual(r.flags.map((f) => [f.measure, f.reasons[0].wide]), [[1, false]]);
+  st.systems[0].review = ['코드가 두 판독에서 다릅니다 — 원본 확인 필요'];
+  r = assemble(st, geo, {}).report;
+  assert.deepStrictEqual(r.flags.map((f) => [f.measure, f.reasons[0].wide]), [[1, true], [2, true]]);
+  delete st.systems[0].review;
+
+  // base 는 머리 좌표보다 앞서고, 머리 없이 넣은 음표는 다른 음의 머리를 빼앗지 않는다
+  const n0 = st.systems[0].notes[0];
+  const before = assemble(st, geo, {}).measures[0].notes[0].pitch;
+  n0.base = 'G4';
+  assert.equal(assemble(st, geo, {}).measures[0].notes[0].pitch, 'G4');
+  assert.notEqual(before, 'G4');
+  delete n0.base;
+  st.systems[0].notes.splice(1, 0, { measure: 1, duration: 'quarter', rest: false, base: 'A4' });
+  const m1 = assemble(st, geo, {}).measures[0].notes.map((n) => n.pitch);
+  assert.equal(m1[1], 'A4');
+  assert.equal(m1[2], before);                       // 뒤 음표 음높이는 그대로
+}
+
+// 막대선이 음표와 어긋나면 머리 사이로 옮긴다(t009-3 단4: 조표 뒤 가짜 막대선)
+{
+  const { measureEdges } = await import('./rebuild.js');
+  const hd = (m, x) => ({ measure: m, head: { x, y: 0, w: 8, h: 6 } });
+  const sys = { left: 10, right: 900, bars: [60, 600] };
+  const sd = { measures: 3, notes: [hd(1, 120), hd(1, 280), hd(2, 360), hd(2, 520), hd(3, 640)] };
+  assert.deepStrictEqual(measureEdges(sys, sd), [10, 324, 600, 900]);
+  // 맞는 막대선은 그대로, 개수가 다르면 손대지 않는다
+  assert.deepStrictEqual(measureEdges({ ...sys, bars: [300, 600] }, sd), [10, 300, 600, 900]);
+  assert.deepStrictEqual(measureEdges({ ...sys, bars: [60] }, sd), [10, 60, 900]);
+}

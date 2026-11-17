@@ -18,7 +18,7 @@ import {
 import { buildPdf, canvasToJpeg } from "./pdf.js";
 import { request, readScore } from './service.js';
 import { redraw, whyNoRedraw } from "./redraw.js";
-import { fixPanel } from './fixbeats.js';
+import { Review } from './measure-edit.js';
 
 
 /* ─────────────────────────── 상태 ─────────────────────────── */
@@ -518,8 +518,30 @@ function detectModulation(texts) {
   return head === tail ? null : { head, tail };
 }
 
+/**
+ * **장 전체 조표 판독이 코드 진행과 어긋나면 코드 쪽을 믿는다.** 단마다 같은 조표를
+ * 읽었는데 '조표+코드' 원조성 추정이 다른 조성이면 조표 글리프 하나를 잘못 센 것이다
+ * (실측 t017-1: F장조 ♭1 을 ♭2 로 읽어 E 가 전부 E♭ 으로 나왔다 — 추정은 F, 확신 1.0).
+ * 단마다 조표가 다르면(전조) 건드리지 않는다.
+ */
+function settleKey(ex) {
+  const st = ex?.struct;
+  const g = ex?.keyGuess;
+  // 근거에 조표와 코드가 둘 다 있어야 한다 — 조표만 본 추정은 'D♭m(♭8)' 같은 값도 낸다
+  if (!st?.systems?.length || !g?.key || !/조표/.test(g.basis || '') || !/코드/.test(g.basis || '')) return;
+  const fs = [...new Set(st.systems.map((s) => s.srcFifths).filter(Number.isInteger))];
+  if (fs.length !== 1) return;
+  let want;
+  try { want = fifths(planBySemitones(g.key, 0).fromKey); } catch { return; }
+  if (!Number.isInteger(want) || Math.abs(want) > 7 || want === fs[0]) return;
+  for (const s of st.systems) if (s.srcFifths === fs[0]) s.srcFifths = want;
+  st.sourceFifths = want;
+  st.keySettled = { from: fs[0], to: want };
+}
+
 function enterKeyScreen() {
   const ex = state.extraction;
+  settleKey(ex);
   const texts = flatChords().map((f) => f.chord.text);
   // **서버의 조표 판정을 우선한다.** 서버는 검출기로 조표의 ♯/♭ 개수를 세는데,
   // 그게 코드 통계보다 확실하다(실측: 위싱 콘티의 `Bb C F Gm F/A`를 코드로는
@@ -590,18 +612,20 @@ function enterKeyScreen() {
   const notes = (gate?.notes || []).map(txt);
   const marked = gate?.status === 'marked';
   const stuck = gate?.status !== 'ready' && !marked;
-  if (q.warning || stuck || notes.length) {
+  if (q.warning || stuck || marked || notes.length) {
     // **지원하지 않는 악보는 "확인이 필요합니다"로 뭉뚱그리지 않는다.**
     // 고치면 될 것처럼 들리면 사용자가 계속 시도하게 된다.
     const unsupported = (gate?.twoVoice ?? 0) >= 0.35;
+    const nFlag = gate?.flagged?.length || 0;
     const head = marked
-      ? '읽었습니다. 노란색 마디만 원본과 한 번 비교해 주세요 — 확인이 필요한 결과라 크레딧은 차감하지 않았습니다.'
+      ? `읽었습니다. 확인이 필요한 마디${nFlag ? ` ${nFlag}개` : ''}를 노랗게 짚어 드릴게요 — `
+        + '원본과 비교해 확인하면 저장할 수 있습니다. 확인이 필요한 결과라 크레딧은 차감하지 않았습니다.'
       : !stuck
       ? '읽었습니다. 아래는 확인하실 곳입니다.'
       : unsupported
         ? '이 악보는 아직 지원하지 않습니다. 크레딧은 차감되지 않았습니다.'
         : '원본 확인이 필요합니다. 저장 및 크레딧 차감은 보류됩니다.';
-    const lines = stuck ? blocking : marked ? [] : notes;
+    const lines = stuck ? (gate?.hard?.length ? gate.hard : blocking) : marked ? [] : notes;
     warn.textContent = [q.warning, head, ...lines.slice(0, 8)].filter(Boolean).join('\n');
     warn.style.whiteSpace = 'pre-line';
     warn.classList.toggle('soft', !stuck);
@@ -876,38 +900,68 @@ async function redrawPath() {
   // 표시가 없으면 "실패로 만들고 화면에서 가져가기"가 공짜 경로가 된다.
   // 통과한 결과에는 붙이지 않는다. 값을 치렀으면 깨끗한 악보를 받아야 한다.
   markUnverified($("out"), ex);
-  // **안 맞는 마디는 사람이 고칠 수 있게 한다.** 자동 역산이 포기한 것만
-  // 남으므로(rebuild.fitdur), 여기서 막히면 사용자가 손쓸 방법이 없다.
-  const fix = $("fix-beats");
-  fix.replaceChildren();
-  const panel = fixPanel(ex.struct, () => { redrawPath(); });
-  if (panel) fix.append(panel);
   state.rendered = true;
-  updateExportState();
+  // **확인할 마디는 악보 위에 짚는다.** 예전엔 경고 문단에 "단3 마디2(3.5박 초과)"
+  // 처럼 적었는데, 사용자가 그 자리를 악보에서 다시 찾아야 했고 고칠 방법도
+  // 음가 고르개뿐이었다. 이제 그 마디를 눌러 원본과 대 보고 바로 고친다.
+  $("mlayer").hidden = false;
+  review.update({ boxes: r.boxes, flags: r.report.flags,
+                  width: $("out").width, height: $("out").height });
 
   $("res-title").textContent =
-    `${formatKey(plan.fromKey)}키 → ${formatKey(plan.toKey)}키 미리보기`;
-  $("res-sub").textContent =
-    `${r.report.systems}단 · ${r.report.measures}마디 — ` +
-    `원본과 대조한 뒤 저장해 주세요`;
+    `${formatKey(plan.fromKey)}키 → ${formatKey(plan.toKey)}키`;
+  $("res-sub").textContent = `${r.report.systems}단 · ${r.report.measures}마디`;
 
+  // 경고 문단은 **마디로 짚을 수 없는 것**만 — 쪽이 넘쳤거나, 저장할 수 없는 악보
   const warn = $("res-warn");
-  const bad = r.notes.filter((t) => t.startsWith("⚠️"));
-  const summary = r.notes[r.notes.length - 1];
-  warn.className = bad.length ? "alert" : "alert info";
-  // **요약을 늘 보여준다.** 경고만 띄우면 무엇이 몇 개 됐는지 알 수 없다.
-  // **경고는 줄을 나눈다.** 박자 경고는 어느 마디인지까지 적어 두 줄이라,
-  // 가운뎃점으로 이어 붙이면 다른 경고와 뒤엉켜 읽히지 않는다.
-  warn.textContent = bad.length
-    ? `${bad.join("\n")}\n${summary}`
-    : `악보를 새로 그렸습니다 — ${summary}`;
+  const lines = [];
+  if (r.pages > 1) lines.push(`${r.pages}쪽으로 나왔습니다 — 원본은 한 쪽입니다. 저장 전에 확인해 주세요`);
+  const gate = ex.qualityGate || {};
+  if (gate.status === 'needs_review') {
+    const why = (gate.hard?.length ? gate.hard : gate.blocking || []).slice(0, 3);
+    lines.push(['이 악보는 아직 저장할 수 없습니다 — 크레딧은 차감되지 않았습니다', ...why].join('\n· '));
+  }
+  warn.className = "alert";
+  warn.textContent = lines.join("\n");
   warn.style.whiteSpace = "pre-line";
-  warn.hidden = false;
+  warn.hidden = !lines.length;
 
   $("copyright-line").textContent = copyrightNote(ex);
   $("t-orig").classList.toggle("on", state.showOriginal);
   $("t-new").classList.toggle("on", !state.showOriginal);
-  show("result");
+  // 이미 결과 화면이면 다시 그려도 스크롤을 지킨다 — 마디를 고칠 때마다 맨 위로
+  // 튀면 고친 자리를 다시 찾아야 한다
+  if ($("s-result").hidden) show("result");
+  paintReview();
+}
+
+/** 확인할 마디 진행 막대 */
+function paintReview() {
+  const bar = $("review");
+  const status = state.extraction?.qualityGate?.status;
+  const left = review.remaining();
+  const done = review.confirmedCount();
+  const total = left + done;
+  const blocked = status === 'needs_review';
+  $("sheet-tip").hidden = !state.rendered || state.showOriginal || (total > 0 && !blocked);
+  if (!state.rendered || state.showOriginal || blocked || total === 0) {
+    bar.hidden = true;
+    updateExportState();
+    return;
+  }
+  bar.hidden = false;
+  bar.classList.toggle("done", left === 0);
+  $("rv-fill").style.width = `${Math.round((done / total) * 100)}%`;
+  if (left) {
+    $("rv-title").textContent = done ? `확인할 마디 ${left}개 남았어요` : `확인할 마디 ${left}개`;
+    $("rv-sub").textContent = "노란 마디를 원본과 비교해 주세요 · 다 확인하면 저장할 수 있어요";
+    $("rv-go").textContent = done ? "다음 마디" : "확인 시작";
+  } else {
+    $("rv-title").textContent = "모두 확인했어요";
+    $("rv-sub").textContent = `${done}마디를 원본과 대 봤습니다 · 이제 저장할 수 있어요`;
+    $("rv-go").textContent = "저장하기";
+  }
+  updateExportState();
 }
 
 function commitConfirm() {
@@ -995,7 +1049,8 @@ function renderResult() {
   $('res-warn').hidden = true;
   $('t-orig').classList.add('on');
   $('t-new').classList.remove('on');
-  updateExportState();
+  $('mlayer').hidden = true;
+  paintReview();
   show('result');
 }
 
@@ -1083,6 +1138,11 @@ function wireResult() {
   $("again").addEventListener("click", () => { state.showOriginal = false; show("key"); });
 
   $('dl-png').addEventListener('click', () => exportScore('png'));
+  $('rv-go').addEventListener('click', () => {
+    if (review.remaining()) { review.openNext(); return; }
+    $('dl-pdf').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('dl-pdf').focus({ preventScroll: true });
+  });
   $('dl-pdf').addEventListener('click', () => exportScore('pdf'));
 
   $("back").addEventListener("click", () => {
@@ -1125,11 +1185,17 @@ function guardContent() {
   }
 }
 
+/** 저장해도 되나 — 검사를 통과했거나 노란 마디를 사람이 다 확인했다 */
+function canExport() {
+  const status = state.extraction?.qualityGate?.status;
+  return ['ready', 'marked'].includes(status) && review.remaining() === 0;
+}
+
 function updateExportState() {
   const status = state.extraction?.qualityGate?.status;
   const ready = status === 'ready';
-  const usable = ready || status === 'marked';
-  for (const id of ['dl-png', 'dl-pdf']) $(id).disabled = !usable || !state.rendered || state.exportBusy;
+  const left = review.remaining();
+  for (const id of ['dl-png', 'dl-pdf']) $(id).disabled = !canExport() || !state.rendered || state.exportBusy;
   // 차감은 **판독**에서 이미 끝났다. 저장은 값을 치른 결과를 받아 가는
   // 것이므로 공짜다 — 저장에서 깎으면 미리보기를 화면에서 가져가는 쪽이
   // 이득이 되어 구조가 어긋난다.
@@ -1138,9 +1204,11 @@ function updateExportState() {
   // 지어낸 곳이 없다는 뜻이다. 약속을 한 줄로 유지한다.
   $('credit-notice').textContent = ready
     ? '이 판독에 크레딧 1개를 사용했습니다 · 키 변경과 저장은 몇 번이든 추가 차감 없음'
+      + (left ? ` · 고친 마디 ${left}개를 확인하면 저장할 수 있어요` : '')
     : status === 'marked'
-    ? '노란색 마디는 원본과 비교해 주세요 · 확인이 필요한 결과라 차감하지 않았습니다 · 저장 가능'
-    : '확인이 필요한 결과라 차감하지 않았습니다 — 화면은 그대로 쓰실 수 있습니다.';
+    ? (left ? `노란 마디 ${left}개를 확인하면 저장할 수 있어요 · ` : '')
+      + '확인이 필요한 결과라 크레딧을 차감하지 않았습니다'
+    : '저장할 수 없는 악보라 크레딧을 차감하지 않았습니다';
 }
 
 function initProfile() {
@@ -1302,8 +1370,7 @@ async function refreshAccount() {
 }
 
 async function exportScore(format) {
-  if (state.exportBusy || !state.rendered
-      || !['ready', 'marked'].includes(state.extraction?.qualityGate?.status)) return;
+  if (state.exportBusy || !state.rendered || !canExport()) return;
   state.exportBusy = true;
   updateExportState();
   // Prevent changing the preview while its export is being prepared.
@@ -1326,6 +1393,14 @@ async function exportScore(format) {
 }
 
 /* ─────────────────────────── 시작 ─────────────────────────── */
+
+const review = new Review({
+  layer: $('mlayer'),
+  dialog: $('medit'),
+  get: () => ({ ex: state.extraction, image: state.image }),
+  rerender: () => redrawPath(),
+  onChange: () => paintReview(),
+});
 
 $("go").addEventListener("click", startConfirmOrRender);
 wireUpload();

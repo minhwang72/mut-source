@@ -1009,10 +1009,13 @@ FAINT_INK = 230
 # 가사 띠 높이의 **안전망** (오선 간격 배수). 실제 범위는 아래 덩어리 선택이
 # 정하므로 여기서 조일 이유가 없다 — 3절까지 적힌 악보가 있다(실측
 # wish0830-7: 세 줄이 8.3칸). 폭주만 막는다.
-MAX_LYRIC_BAND = 9.0
+MAX_LYRIC_BAND = 18.0     # 4절 악보가 있다(t009-3·t031-3: 줄당 2.2~3칸 × 4)
 # 글자 한 줄로 볼 최소 덩어리 높이 / 같은 가사로 이어 붙일 최대 빈틈 (칸)
 LYRIC_LINE_MIN = 1.0
 LYRIC_JOIN_GAP = 0.8
+# **절 사이는 더 벌어져 있다**(실측 처음 보는 악보: 0.7~1.6칸, t020-09 0.9 · t031-3 1.6).
+# 본체 줄과 높이가 비슷한 글자 줄(0.6~1.7배)이면 이만큼까지 떨어져도 같은 가사다.
+LYRIC_VERSE_GAP = 2.0
 # 글자 줄로 볼 최소 가로 폭 (오선 폭 대비). 구역 표시 상자는 이보다 좁다.
 LYRIC_WIDE = 0.30
 # 구역 표시가 놓이는 오선 왼쪽 여백 (오선 간격 배수). 가사는 이 뒤에서 시작한다.
@@ -1146,14 +1149,26 @@ def find_lyric_band(ink: np.ndarray, st: Staff, spacing: float,
         # 가로로 넓은가 = 글자 줄인가 (구역 표시 상자는 좁다)
         return int(ink[lo0 + blk[0]:lo0 + blk[1], :].any(axis=0).sum()) >= wide_need
 
+    main_h = b - a
+    verse = spacing * LYRIC_VERSE_GAP
+    main_w = int(ink[lo0 + a:lo0 + b, :].any(axis=0).sum())
+
+    def joins(gap, blk):
+        h_ = blk[1] - blk[0]
+        # 가사가 일부 마디 아래에만 있으면 오선 폭의 30% 가 안 된다(t031-3 4절: 560/2240px).
+        # 본체 줄과 폭이 비슷하면 글자 줄이다 — 구역 표시 상자는 훨씬 좁다
+        w_ = int(ink[lo0 + blk[0]:lo0 + blk[1], :].any(axis=0).sum())
+        if h_ < line or not (wide(blk) or w_ >= 0.6 * main_w):
+            return False
+        # 가까우면 잇는다(예전 규칙). 절 줄은 본체와 키가 비슷할 때만 더 멀리서도
+        return gap <= near or (gap <= verse and 0.6 * main_h <= h_ <= 1.7 * main_h)
+
     i = k                                  # ③ 위로
-    while i > 0 and (a - blocks[i-1][1]) <= near \
-            and (blocks[i-1][1] - blocks[i-1][0]) >= line and wide(blocks[i-1]):
+    while i > 0 and joins(a - blocks[i-1][1], blocks[i-1]):
         i -= 1
         a = blocks[i][0]
     j = k                                  #    아래로
-    while j + 1 < len(blocks) and (blocks[j+1][0] - b) <= near \
-            and (blocks[j+1][1] - blocks[j+1][0]) >= line and wide(blocks[j+1]):
+    while j + 1 < len(blocks) and joins(blocks[j+1][0] - b, blocks[j+1]):
         j += 1
         b = blocks[j][1]
     b = min(b, a + int(round(spacing * MAX_LYRIC_BAND)))

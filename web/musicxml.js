@@ -44,6 +44,9 @@ export function splitRoot(sym) {
 
 function harmony(text, offset = 0) {
   const body = String(text).split('/');
+  // 근음이 없으면 그릴 수 없다 — 악보 전체를 멈추지 말고 이 코드만 뺀다
+  // (베이스만 적은 /A 는 rebuild.chordsByStaff 가 앞 코드에 붙여 G/A 로 바꿔 준다)
+  if (!/^[A-G]/i.test(body[0].trim())) return '';
   const [step, alter, tail] = splitRoot(body[0]);
   let kind = 'major';
   if (tail.startsWith('m') && !tail.startsWith('maj')) {
@@ -146,8 +149,8 @@ export function build(measures, fifths, opts = {}) {
     }
     // 코드는 전부 마디 첫머리에 적고 `<offset>`으로 자리를 잡는다
     for (const c of (m.chords || [])) {
-      x.push(typeof c === 'string' ? harmony(c)
-        : harmony(c.text, Number(c.offset) || 0));
+      const h = typeof c === 'string' ? harmony(c) : harmony(c.text, Number(c.offset) || 0);
+      if (h) x.push(h);
     }
 
     // 온쉼표 하나뿐인 마디는 마디 쉼 — 길이는 박자표대로(6/8 이면 3박)
