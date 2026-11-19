@@ -22,12 +22,17 @@ from __future__ import annotations
 
 import difflib
 import math
+import os
 import re
 import sys
 
 from pydantic import BaseModel, Field
 
-MODEL = "claude-sonnet-5-5"
+# 측정용으로 바꿔 끼울 수 있게 둔다. 표결(vote)은 세 번째 표라 따로 둔다
+MODEL = os.environ.get("MUTE_CHECK_MODEL") or "claude-sonnet-5-5"
+# 11/19 33장: low 가 기본(adaptive)과 노란 277→280 으로 같고 값 65→24원, 더 빠르다
+EFFORT = os.environ.get("MUTE_CHECK_EFFORT", "low") or None   # 빈 값이면 모델 기본
+VOTE_MODEL = "claude-sonnet-5-5"
 REVIEW = "코드가 두 판독에서 다릅니다 — 원본 확인 필요"
 
 
@@ -111,6 +116,7 @@ def read(strip, n: int, model: str = MODEL) -> list[SystemChords]:
         # 생각 토큰도 이 안에서 쓴다 — 8000 이면 55마디 장에서 잘렸다(실측 t048-4: 코드 재판독
         # 실패 → 장 전체가 확인할 마디). 쓴 만큼만 비용이 든다
         model=model, max_tokens=16000, thinking={"type": "adaptive"},
+        **({"output_config": {"effort": EFFORT}} if EFFORT else {}),
         messages=[{"role": "user", "content": [
             {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
             {"type": "text", "text": PROMPT.format(n=n)}]}],
@@ -165,7 +171,7 @@ def vote_image(img, boxes: list[dict]):
     return out
 
 
-def vote(im, n: int, model: str = MODEL) -> list[str]:
+def vote(im, n: int, model: str = VOTE_MODEL) -> list[str]:
     """잘라 쌓은 코드를 하나씩 읽는다 — 띠 판독과 첫 판독이 갈린 코드의 세 번째 표."""
     import base64
     import io
@@ -595,4 +601,28 @@ def check(img, extraction: dict, ink=None) -> dict:
         sysd["chords"] = sorted([{x: v for x, v in c.items() if x != "was"} for c in got] + dropped,
                                 key=lambda c: c["box"]["x"])
         stat["fixed"] += 1
+    stat["merged"] = flag_merged(systems, st, geo)
     return stat
+
+
+# 코드 둘이 붙어 읽힌 글자 — 실측 t049-6 "D(add2)A". 파서는 뒤 A 를 성질로 받아
+# 조옮김에서 A 가 그대로 남는다. D(add2)/A 일 수도 있어 쪼개지 않고 그 마디를 확인 필요로
+_MERGED = re.compile(r"\)\s*[A-G]")
+
+
+def flag_merged(systems: list[dict], st: list[dict], geo: list[dict]) -> int:
+    hit = 0
+    for s in systems:
+        bad = [c for c in s.get("chords") or [] if not c.get("dropped") and _MERGED.search(c["text"])]
+        if not bad:
+            continue
+        k = s.get("index")
+        g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)
+        sysd = next((x for x in st if x.get("system", -1) == k), None)
+        n = max(1, (sysd or {}).get("measures") or 1)
+        e = _edges(g, sysd) if g else []
+        ms = ({_measure_at(c, e, g.get("spacing") or 0, n) for c in bad}
+              if g and len(e) - 1 == n else None)
+        _review(st, k, ms)
+        hit += len(bad)
+    return hit

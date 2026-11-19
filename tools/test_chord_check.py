@@ -67,9 +67,22 @@ def test_align_strip_primary():
                  cw=14, ch=8) is None
 
 
+def test_merged_chord_flagged():
+    # t049-6: "D(add2)A" — 조옮김하면 뒤 A 가 남는다. 고치지 않고 그 마디만 확인 필요로
+    from chord_check import flag_merged
+    systems = [{"index": 0, "chords": [chord("A/C#", 120), chord("D(add2)A", 160), chord("D", 220)]}]
+    st = [{"system": 0, "measures": 4, "notes": []}]
+    assert flag_merged(systems, st, [dict(GEO, index=0)]) == 1
+    assert [r.split(":")[0] for r in st[0]["review"]] == ["마디 2"]
+    st2 = [{"system": 0, "measures": 4, "notes": []}]
+    ok = [{"index": 0, "chords": [chord("D(add2)", 160), chord("C7(b9)", 220), chord("Am7/G", 300)]}]
+    assert flag_merged(ok, st2, [dict(GEO, index=0)]) == 0 and "review" not in st2[0]
+
+
 if __name__ == "__main__":
     test_norm(); test_text_fixed_and_missing_added_at_ink(); test_measure_numbers_not_trusted()
     test_refuse_when_place_or_root_disagrees(); test_align_strip_primary()
+    test_merged_chord_flagged()
     print("ok")
 
 
