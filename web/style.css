@@ -254,6 +254,23 @@ em { font-style: normal; }
 }
 
 /* ═════════════ 업로드 ═════════════ */
+.modes {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-bottom: var(--sp-sm);
+}
+.pick {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 14px 16px; border: 1px solid var(--rule); border-radius: var(--r-md);
+  background: var(--paper-raised); color: var(--ink); font: inherit; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.pick b { font-size: 15px; font-weight: 650; }
+.pick span { font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.pick:hover { box-shadow: var(--shadow-1); }
+.pick[aria-checked="true"] { border-color: var(--mark); box-shadow: inset 0 0 0 1px var(--mark); }
+.pick[aria-checked="true"] b::before { content: "● "; color: var(--mark); font-size: 11px; vertical-align: 2px; }
+.pick:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 520px) { .modes { grid-template-columns: 1fr; } }
 .drop {
   position: relative; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -630,12 +647,14 @@ progress::-moz-progress-bar { background: var(--ink); }
     grid-template-columns: 1fr 1fr;
     /* 오른쪽 칸을 비워 두면 큰 여백만 남는다 — 안내를 업로드 카드 밑에 붙인다 */
     grid-template-areas:
+      "hero  modes"
       "hero  drop"
       "steps notes"
       "plan  plan";
     align-items: start;
   }
   #s-upload .steps { grid-area: steps; }
+  #s-upload .modes { grid-area: modes; margin-bottom: 0; }
   #s-upload .plan  { grid-area: plan; }
   #s-upload .plan-rows > div { padding-inline: 4px; }
   #s-upload .notes { grid-area: notes; align-self: start; padding-top: 4px; }

@@ -89,8 +89,8 @@
     <svg class="hero-clef" aria-hidden="true"><use href="#i-clef"/></svg>
     <h1 class="hero-title">악보 한 장을<br><em>원하는 키</em>로</h1>
     <p class="hero-sub">
-      사진을 올리면 음표·코드·가사를 읽어 새 키로 다시 그립니다.
-      가사는 원본 그대로 두고, 임시표는 새 조성에 맞춰 다시 계산합니다.
+      사진을 올리면 코드만 새 키로 바꿔 쓰거나,
+      음표·조표까지 옮겨 악보를 새로 그립니다.
     </p>
   </div>
 
@@ -108,6 +108,18 @@
     <p class="fineprint">
       계정이 없으신가요? <a href="/signup" data-go="signup">회원가입</a>
     </p>
+  </div>
+
+  <!-- 변환 방식. 고른 것은 다음 방문에도 기억한다 -->
+  <div class="modes" id="modes" role="radiogroup" aria-label="변환 방식">
+    <button type="button" class="pick" data-output="chords" role="radio" aria-checked="false">
+      <b>코드만 바꾸기</b>
+      <span>원본 악보 위에서 코드 글자만 새 키로. 음표는 원본 그대로라 빠르고 정확해요</span>
+    </button>
+    <button type="button" class="pick" data-output="redraw" role="radio" aria-checked="false">
+      <b>악보 새로 그리기</b>
+      <span>음표·조표·코드를 모두 옮겨 새로 조판해요. 노래하는 사람 악보에 좋아요</span>
+    </button>
   </div>
 
   <label id="drop" class="drop" for="file">
@@ -161,6 +173,7 @@
   <ul class="notes">
     <li>멜로디 한 줄짜리 악보를 지원합니다 — 합창·2부 악보는 아직 읽지 못합니다</li>
     <li id="privacy-note">이미지는 로컬 메모리에서 처리 후 해제되며 저장하지 않습니다</li>
+    <li id="beta-note" hidden></li>
     <li>체험 크레딧은 브라우저와 접속 주소 양쪽으로 셉니다</li>
     <li>체험 잔액과 결과는 임시 보관됩니다</li>
   </ul>
@@ -286,6 +299,7 @@
   <p class="sheet-tip" id="sheet-tip" hidden>마디를 누르면 원본과 나란히 보며 고칠 수 있어요</p>
 
   <div class="alert" id="res-warn" hidden></div>
+  <button id="to-redraw" class="btn outline" hidden>악보 새로 그리기로 다시 읽기</button>
   <p id="credit-notice" class="credit-notice" role="status"></p>
 
   <div class="row col">

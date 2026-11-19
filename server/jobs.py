@@ -56,10 +56,14 @@ class JobStore:
                  ttl: float = 900.0, max_queue: int = 8, max_active: int = 2,
                  max_jobs: int = 64, workers: int = 1,
                  reader_version: str = "v1",
-                 ip_hourly: int = 12):
+                 ip_hourly: int = 12, monthly: int = 0,
+                 daily_user: int = 0, daily_all: int = 0):
         self.reader = reader
         self.trial_balance = int(trial_balance)
         self.price = int(price)
+        # 변환 방식별 값 — 코드만 바꾸기는 원가가 1/4 이라 따로 매길 수 있게 둔다(가격 미정)
+        self.prices = {"redraw": self.price,
+                       "chords": int(os.environ.get("MUTE_PRICE_CHORDS") or self.price)}
         self.ttl = float(ttl)
         self.max_queue = int(max_queue)
         self.max_active = int(max_active)
@@ -70,6 +74,14 @@ class JobStore:
         # 신원은 원래 초기화되는 것이라, 익명 구간에서 기댈 수 있는 건 IP 뿐이다
         # (완벽하지 않다 — 모바일·VPN 은 바뀐다. 그래서 로그인이 필요하다).
         self.ip_hourly = int(ip_hourly)
+        # **베타 비용 상한.** 결제 전에는 회원에게 매달 monthly 크레딧까지 채워 주고,
+        # 손해는 하루 판독 수로 막는다 — "확인 필요"는 환불이라 크레딧만으로는
+        # 판독 횟수가 안 막힌다. 0 이면 끈다.
+        # ponytail: 하루 카운터는 메모리라 재시작하면 0 부터, 엄격히 막으려면 read_log 로 센다
+        self.monthly = int(monthly)
+        self.daily_user = int(daily_user)
+        self.daily_all = int(daily_all)
+        self._day = ["", {}, 0]           # [날짜, {사람: 판독 수}, 전체]
         self.started = time.time()
 
         self._lock = threading.Lock()
@@ -262,6 +274,8 @@ class JobStore:
             u = self._user_of.get(sid)
         row = None
         if self.durable:
+            if u and not master and self.monthly:
+                DB.monthly_topup(u, self.monthly)
             row = DB.get_user(u) if u else None
             bal = int((row or {}).get("balance") or 0)
             need_agree = bool(row) and row.get("agreed_at") is None
@@ -280,7 +294,8 @@ class JobStore:
             **self.profile(sid),
             "balance": bal,
             "chargeOn": "read",
-            "pricePerScore": self.price,
+            "pricePerScore": self.price, "prices": self.prices,
+            "monthly": self.monthly, "dailyUser": self.daily_user,
             # 이 두 줄이 "아직 결제 시스템이 아니다"를 말한다.
             # 가입 직후 약관 동의를 아직 안 받은 상태
             "needsAgree": need_agree,
@@ -324,6 +339,7 @@ class JobStore:
             # 판독을 무한히 돌릴 수 있었다. 잡아 두기만 하고 **결과가 검사를
             # 통과할 때 확정**한다. 실패하거나 확인이 필요한 결과면 돌려준다.
             master = sid in self._master
+            price = self.prices.get(opts.get("output") or "redraw", self.price)
             u = self._user_of.get(sid)
             bal = (DB.balance(u) if (self.durable and u) else
                    self._balances.setdefault(sid, self.trial_balance))
@@ -340,26 +356,39 @@ class JobStore:
                 raise Denied("약관 동의가 필요합니다. 회원가입 화면에서 "
                              "동의해 주세요.")
             jid = secrets.token_urlsafe(12)
+            who = u or ip or sid
             if not master:
-                if ip and self._ip_spent.get(ip, 0) >= self.trial_balance:
+                today = time.strftime("%Y-%m-%d")
+                if self._day[0] != today:
+                    self._day = [today, {}, 0]
+                if self.daily_all and self._day[2] >= self.daily_all:
+                    raise Busy("오늘 베타 판독량이 다 찼습니다. 내일 다시 시도해 주세요.")
+                if self.daily_user and self._day[1].get(who, 0) >= self.daily_user:
+                    raise Busy(f"하루에 {self.daily_user}장까지 읽을 수 있습니다. "
+                               "내일 다시 시도해 주세요.")
+                if self.durable and u and self.monthly:
+                    DB.monthly_topup(u, self.monthly)
+                # IP 체험 한도는 익명 구간용이다 — 로그인 회원은 회원 장부가 막는다
+                if ip and not (self.durable and u) and \
+                        self._ip_spent.get(ip, 0) >= self.trial_balance:
                     raise Denied("체험 크레딧을 모두 사용했습니다.")
                 if self.durable and u:
                     # **읽고 빼지 않는다.** 두 요청이 같은 잔액을 읽으면 한 번
                     # 값으로 두 번 판독된다. 조건부 UPDATE 한 방으로 깎아
                     # DB 가 직렬화하게 둔다.
-                    if not DB.spend(u, self.price, jid):
+                    if not DB.spend(u, price, jid):
                         raise Denied("크레딧이 모자랍니다.")
                 else:
-                    if bal < self.price:
+                    if bal < price:
                         raise Denied("체험 크레딧이 모자랍니다.")
-                    self._balances[sid] = bal - self.price
+                    self._balances[sid] = bal - price
                     if u:
                         self._user_balance[u] = self._balances[sid]
 
             job = {"id": jid, "owner": sid, "status": "queued", "stage": "queued",
                    "progress": 0, "result": None, "error": None,
                    "key": key, "charged": False,
-                   "held": 0 if master else self.price, "ip": ip, "master": master,
+                   "held": 0 if master else price, "ip": ip, "master": master,
                    "created": time.time(), "updated": time.time()}
             self._jobs[jid] = job
             self._blobs[jid] = blob
@@ -370,10 +399,13 @@ class JobStore:
                 del self._blobs[jid]
                 if not master:                       # 잡아 둔 값을 되돌린다
                     if self.durable and u:
-                        DB.grant(u, self.price, jid, "refund")
+                        DB.grant(u, price, jid, "refund")
                     else:
-                        self._balances[sid] += self.price
+                        self._balances[sid] += price
                 raise Busy("대기열이 가득 찼습니다. 잠시 뒤 다시 시도해 주세요.") from None
+            if not master:
+                self._day[1][who] = self._day[1].get(who, 0) + 1
+                self._day[2] += 1
             return self._public(job), False
 
     def get(self, sid: str, jid: str) -> dict | None:
@@ -419,7 +451,7 @@ class JobStore:
             "kakao": bool(os.environ.get("KAKAO_REST_KEY")),
             "naver": bool(os.environ.get("NAVER_CLIENT_ID")),
             "chargeOn": "read",          # 저장이 아니라 판독에서 깎는다
-            "pricePerScore": self.price,
+            "pricePerScore": self.price, "prices": self.prices,
             "trialBalance": self.trial_balance,
             "storage": "memory",
             "resetsOnRestart": True,

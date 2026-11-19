@@ -67,3 +67,6 @@ eval/sweep*.err
 
 # 측정용 homr 가상환경(로컬 전용)
 .homr-venv/
+eval/aicache_*/
+eval/chords_sweep*.json
+eval/chords_sweep*_structs/

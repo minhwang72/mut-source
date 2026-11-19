@@ -180,3 +180,36 @@ s2 = st.new_session(); st.grant_auth(s2, user="kakao:77", name="민")
 assert st.account(s2)["balance"] == spent, st.account(s2)
 assert st.account(s2)["name"] == "민"
 print("# pass 11 / # fail 0")
+
+# ⑨ 변환 방식마다 값이 다를 수 있다 — 코드만 바꾸기 값(MUTE_PRICE_CHORDS)으로 잡고 돌려준다
+os.environ["MUTE_PRICE_CHORDS"] = "1"
+st = J.JobStore(ready, trial_balance=5, price=2, ttl=60, workers=1, ip_hourly=0)
+sid = st.new_session()
+wait(st, sid, st.submit(sid, b"c1", {"output": "chords"})[0]["id"])
+assert st.account(sid)["balance"] == 4, "코드만 바꾸기는 1"
+wait(st, sid, st.submit(sid, b"r1", {"output": "redraw"})[0]["id"])
+assert st.account(sid)["balance"] == 2, "새로 그리기는 2"
+st2 = J.JobStore(needs, trial_balance=5, price=2, ttl=60, workers=1, ip_hourly=0)
+sid = st2.new_session()
+wait(st2, sid, st2.submit(sid, b"c2", {"output": "chords"})[0]["id"])
+assert st2.account(sid)["balance"] == 5, "확인 필요면 잡은 값만큼 돌려준다"
+del os.environ["MUTE_PRICE_CHORDS"]
+print("ok prices")
+
+# ⑩ 베타 하루 상한 — 환불되는 판독도 센다(확인 필요는 환불이라 크레딧으로는 안 막힌다)
+st = J.JobStore(needs, trial_balance=5, ttl=60, workers=1, ip_hourly=0, daily_user=2, daily_all=3)
+a, b = st.new_session(), st.new_session()
+for i in range(2):
+    wait(st, a, st.submit(a, f"d{i}".encode(), {})[0]["id"])
+try:
+    st.submit(a, b"d9", {}); raise AssertionError("한 사람 하루 상한을 넘었다")
+except J.Busy:
+    pass
+wait(st, b, st.submit(b, b"e0", {})[0]["id"])
+try:
+    st.submit(b, b"e1", {}); raise AssertionError("전체 하루 상한을 넘었다")
+except J.Busy:
+    pass
+m = st.new_session(); st.grant_master(m)
+st.submit(m, b"m0", {})                       # 마스터는 상한 밖
+print("ok daily caps")

@@ -19,6 +19,7 @@ import { buildPdf, canvasToJpeg } from "./pdf.js";
 import { request, readScore } from './service.js';
 import { redraw, whyNoRedraw } from "./redraw.js";
 import { Review } from './measure-edit.js';
+import { drawChordsOnly, chordAt } from './chords-only.js';
 
 
 /* ─────────────────────────── 상태 ─────────────────────────── */
@@ -45,7 +46,12 @@ const state = {
   /** 결제 내역. 실제 주문이 생기기 전까지 비어 있다 — 지어내지 않는다. */
   orders: [],
   pack: null,
+  /** 변환 방식: 'chords' 코드만 바꾸기 · 'redraw' 악보 새로 그리기 */
+  output: (() => { try { return localStorage.getItem('mut.output') || 'chords'; } catch { return 'chords'; } })(),
 };
+
+/** 이 결과가 코드만 바꾸기인가 */
+const chordsOnly = () => state.extraction?.output === 'chords';
 
 const $ = (id) => document.getElementById(id);
 const SCREENS = ["upload", "loading", "key", "confirm", "result",
@@ -378,6 +384,19 @@ function wireUpload() {
   initProfile();
   renderPacks($("packs-public"), false);
   renderBiz();
+  const paintModes = () => {
+    for (const b of document.querySelectorAll('#modes .pick')) {
+      b.setAttribute('aria-checked', String(b.dataset.output === state.output));
+    }
+  };
+  for (const b of document.querySelectorAll('#modes .pick')) {
+    b.addEventListener('click', () => {
+      state.output = b.dataset.output;
+      try { localStorage.setItem('mut.output', state.output); } catch { /* 기억 못 해도 쓴다 */ }
+      paintModes();
+    });
+  }
+  paintModes();
   const drop = $("drop");
   const pick = (input) => input.addEventListener("change", (e) => {
     if (e.target.files?.[0]) upload(e.target.files[0]);
@@ -427,8 +446,11 @@ async function upload(file) {
     if (original.naturalWidth * original.naturalHeight > 20000000) throw new Error('이미지 크기를 2천만 화소 이하로 줄여 주세요.');
     const job = await readScore(file, {
       signal: controller.signal, key: $('source-key').value, time: $('source-time').value,
+      output: state.output,
       onProgress: (p) => {
-        const stages = { queued: '처리 순서를 기다리는 중…', running: '음표와 리듬을 확인하는 중…', done: '판독을 마쳤습니다' };
+        const stages = { queued: '처리 순서를 기다리는 중…',
+          running: state.output === 'chords' ? '코드를 두 번 읽어 맞춰 보는 중…' : '음표와 리듬을 확인하는 중…',
+          done: '판독을 마쳤습니다' };
         $('load-step').textContent = p.cached ? '이전에 읽은 결과를 불러오는 중…' : (stages[p.status] || '악보를 확인하는 중…');
         const progress = Number(p.progress);
         $('job-progress').value = Number.isFinite(progress) ? (progress <= 1 ? progress * 100 : progress) : 0;
@@ -617,7 +639,10 @@ function enterKeyScreen() {
     // 고치면 될 것처럼 들리면 사용자가 계속 시도하게 된다.
     const unsupported = (gate?.twoVoice ?? 0) >= 0.35;
     const nFlag = gate?.flagged?.length || 0;
-    const head = marked
+    const head = marked && chordsOnly()
+      ? `읽었습니다. 두 번 읽어 서로 다르게 읽힌 코드 ${nFlag}개는 변환 전에 하나씩 보여 드릴게요. `
+        + '확인이 필요한 결과라 크레딧은 차감하지 않았습니다.'
+      : marked
       ? `읽었습니다. 확인이 필요한 마디${nFlag ? ` ${nFlag}개` : ''}를 노랗게 짚어 드릴게요 — `
         + '원본과 비교해 확인하면 저장할 수 있습니다. 확인이 필요한 결과라 크레딧은 차감하지 않았습니다.'
       : !stuck
@@ -702,11 +727,15 @@ const CONF_MAX = 5;
 
 function startConfirmOrRender() {
   state.showOriginal = false;
-  state.pending = flatChords()
-    .map((f, i) => ({ ...f, i }))
+  const all = flatChords().map((f, i) => ({ ...f, i })).filter((f) => !f.chord.dropped);
+  const low = all
     .filter((f) => (f.chord.confidence ?? 1) < CONF_THRESHOLD)
     .sort((a, b) => (a.chord.confidence ?? 1) - (b.chord.confidence ?? 1))
     .slice(0, CONF_MAX);
+  // **코드만 바꾸기는 두 판독이 갈린 코드를 하나도 빼지 않고 먼저 묻는다.** 결과에서
+  // 코드 말고 바뀌는 게 없으니, 틀린 코드 하나가 곧 틀린 악보다.
+  const doubt = chordsOnly() ? all.filter((f) => f.chord.doubt && !f.chord.checked) : [];
+  state.pending = [...doubt, ...low.filter((f) => !doubt.includes(f))];
   state.pendingAt = 0;
 
   if (state.pending.length === 0) {
@@ -790,12 +819,17 @@ function showConfirm() {
   const flat = flatChords();
   const auto = flat.length - total;
 
-  $("confirm-sub").textContent =
-    `${total}개만 확인해 주세요. 나머지 ${auto}개는 자동으로 읽었습니다.`;
+  $("confirm-sub").textContent = item.chord.missing && !item.chord.checked
+    ? `처음 읽을 때 놓친 코드가 있는 것 같아요 (${at + 1}/${total}). 코드면 맞게 고쳐 주시고, 코드가 아니면 "코드 아님"을 눌러 주세요.`
+    : item.chord.doubt && !item.chord.checked
+    ? `두 번 읽었는데 서로 다르게 읽힌 코드입니다 (${at + 1}/${total}). 원본과 맞는지 봐 주세요.`
+    : `${total}개만 확인해 주세요. 나머지 ${auto}개는 자동으로 읽었습니다.`;
+  // 의심 코드를 한 번에 넘기면 확인한 게 아니다 — 코드만 바꾸기에서는 감춘다
+  $("conf-all").hidden = chordsOnly();
   $("confirm-bar").style.width = `${(at / total) * 100}%`;
   $("conf-badge").textContent =
     `신뢰도 ${Math.round((item.chord.confidence ?? 1) * 100)}%`;
-  $("conf-read").textContent = item.chord.text;
+  $("conf-read").textContent = item.chord.text || '?';
   $("conf-input").value = item.chord.text;
 
   // 처음엔 묻기만 한다
@@ -805,6 +839,8 @@ function showConfirm() {
 
   drawCrop(item.chord.box);
   show("confirm");
+  // 글자를 모르는 놓친 코드는 "맞음"이 뜻이 없다 — 바로 고르개를 연다
+  if (!item.chord.text) openEditor();
 }
 
 /** "수정"을 누르면 조각 버튼을 펼친다 */
@@ -826,13 +862,15 @@ function altGuesses(text) {
 }
 
 function drawCrop(box) {
-  const pad = Math.max(2, Math.round(box.h * 0.2));
-  const sx = Math.max(0, box.x - pad);
-  const sy = Math.max(0, box.y - pad);
-  const sw = Math.min(state.image.naturalWidth - sx, box.w + pad * 2);
-  const sh = Math.min(state.image.naturalHeight - sy, box.h + pad * 2);
+  // **앞뒤 코드와 오선 윗부분까지 보여 준다.** 상자만 오리면 "F/A" 가 "/A" 로만
+  // 보이는 등 무엇과 비교할지 알 수 없었다. 고를 코드는 테두리로 짚는다.
+  const W = state.image.naturalWidth, H = state.image.naturalHeight;
+  const sx = Math.max(0, Math.round(box.x - box.h * 3));
+  const sy = Math.max(0, Math.round(box.y - box.h * 0.7));
+  const sw = Math.min(W - sx, Math.round(box.w + box.h * 6));
+  const sh = Math.min(H - sy, Math.round(box.h * 3.4));
 
-  const scale = Math.min(8, Math.max(3, 120 / sh));
+  const scale = Math.min(4, Math.max(1.5, 640 / sw));
   const cv = $("crop");
   cv.width = Math.round(sw * scale);
   cv.height = Math.round(sh * scale);
@@ -841,6 +879,11 @@ function drawCrop(box) {
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.drawImage(state.image, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  const p = box.h * 0.25;
+  ctx.strokeStyle = "#d99a00";
+  ctx.lineWidth = Math.max(2, scale * 1.2);
+  ctx.strokeRect((box.x - sx - p) * scale, (box.y - sy - p) * scale,
+                 (box.w + p * 2) * scale, (box.h + p * 2) * scale);
 }
 
 /**
@@ -857,6 +900,10 @@ function drawCrop(box) {
 async function safeRender() {
   state.rendered = false;
   try {
+    if (!state.showOriginal && chordsOnly()) {
+      chordsPath();
+      return;
+    }
     if (!state.showOriginal) {
       const why = whyNoRedraw(state.extraction);
       if (why === null) {
@@ -885,6 +932,53 @@ async function safeRender() {
   }
 }
 
+/** 원본 위에서 코드 글자만 바꿔 쓴다(web/chords-only.js). */
+function chordsPath() {
+  const ex = state.extraction;
+  const plan = planBySemitones(ex.meta?.key || 'C', state.semitones);
+  // 글자를 아직 모르는 "놓친 코드"는 원본 그대로 두고 노랗게만 짚는다(확인 전엔 저장 불가)
+  const live = flatChords().filter((f) => !f.chord.dropped && f.chord.text);
+  const mapped = transposeChords(live.map((f) => f.chord.text), plan, { simplify: true });
+  drawChordsOnly($('out'), state.image, live, mapped, ex.geometry?.spacing, true);
+  markUnverified($('out'), ex);
+  state.rendered = true;
+  state.chordItems = flatChords().filter((f) => !f.chord.dropped);
+  $('mlayer').hidden = true;
+  $('res-title').textContent = `${formatKey(plan.fromKey)}키 → ${formatKey(plan.toKey)}키 · 코드만`;
+  $('res-sub').textContent = `코드 ${live.length}개를 바꿨습니다 · 음표와 조표는 원본 그대로`;
+  // 코드 자리를 다 못 찾은 장 — 옛 키 글자가 남을 수 있어 저장을 막는다. 새로 그리기는
+  // 코드를 원본 위치가 아니라 새 조판에 놓으므로 이 문제가 없다
+  const stuck = ex.qualityGate?.status === 'needs_review';
+  const warn = $('res-warn');
+  warn.className = 'alert';
+  warn.textContent = stuck ? ['이 악보는 코드만 바꾸기로 저장할 수 없습니다 — 크레딧은 차감되지 않았습니다',
+    ...(ex.qualityGate.hard || [])].join('\n· ') : '';
+  warn.style.whiteSpace = 'pre-line';
+  warn.hidden = !stuck;
+  $('to-redraw').hidden = !stuck;
+  $('copyright-line').textContent = copyrightNote(ex);
+  $('t-orig').classList.toggle('on', state.showOriginal);
+  $('t-new').classList.toggle('on', !state.showOriginal);
+  if ($('s-result').hidden) show('result');
+  paintReview();
+}
+
+/** 코드만 바꾸기에서 아직 확인하지 않은 의심 코드 */
+const doubtsLeft = () => (chordsOnly()
+  ? flatChords().filter((f) => !f.chord.dropped && f.chord.doubt && !f.chord.checked).length : 0);
+
+/** 결과에서 코드를 누르면 그 코드 하나를 확인·수정하는 화면으로 */
+function openChordAt(e) {
+  if (!chordsOnly() || state.showOriginal || !state.chordItems) return;
+  const cv = $('out'), r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * cv.width / r.width, y = (e.clientY - r.top) * cv.height / r.height;
+  const f = chordAt(state.chordItems, x, y);
+  if (!f) return;
+  state.pending = [f];
+  state.pendingAt = 0;
+  showConfirm();
+}
+
 /** MusicXML로 다시 조판해서 결과 화면을 채운다. */
 async function redrawPath() {
   const ex = state.extraction;
@@ -905,6 +999,7 @@ async function redrawPath() {
   // 처럼 적었는데, 사용자가 그 자리를 악보에서 다시 찾아야 했고 고칠 방법도
   // 음가 고르개뿐이었다. 이제 그 마디를 눌러 원본과 대 보고 바로 고친다.
   $("mlayer").hidden = false;
+  $('to-redraw').hidden = true;
   review.update({ boxes: r.boxes, flags: r.report.flags,
                   width: $("out").width, height: $("out").height });
 
@@ -939,6 +1034,22 @@ async function redrawPath() {
 function paintReview() {
   const bar = $("review");
   const status = state.extraction?.qualityGate?.status;
+  if (chordsOnly()) {
+    const left = doubtsLeft();
+    $("sheet-tip").textContent = '코드를 누르면 원본과 비교해 고칠 수 있어요';
+    $("sheet-tip").hidden = !state.rendered || state.showOriginal;
+    bar.hidden = !state.rendered || state.showOriginal || !left;
+    if (!bar.hidden) {
+      bar.classList.remove("done");
+      $("rv-fill").style.width = '0%';
+      $("rv-title").textContent = `확인할 코드 ${left}개`;
+      $("rv-sub").textContent = "노란 코드를 원본과 비교해 주세요 · 다 확인하면 저장할 수 있어요";
+      $("rv-go").textContent = "확인 시작";
+    }
+    updateExportState();
+    return;
+  }
+  $("sheet-tip").textContent = '마디를 누르면 원본과 나란히 보며 고칠 수 있어요';
   const left = review.remaining();
   const done = review.confirmedCount();
   const total = left + done;
@@ -973,6 +1084,7 @@ function commitConfirm() {
   // 원본 구조 데이터를 직접 수정한다 — 확인이 끝나면 신뢰도를 1로 올린다
   item.chord.text = text;
   item.chord.confidence = 1;
+  item.chord.checked = true;
   if (!text) item.chord.dropped = true;
   state.pendingAt += 1;
   showConfirm();
@@ -1138,7 +1250,13 @@ function wireResult() {
   $("again").addEventListener("click", () => { state.showOriginal = false; show("key"); });
 
   $('dl-png').addEventListener('click', () => exportScore('png'));
+  $('out').addEventListener('click', openChordAt);
+  $('to-redraw').addEventListener('click', () => {
+    document.querySelector('#modes .pick[data-output="redraw"]').click();   // 고르개도 같이 바뀐다
+    if (state.uploadFile) upload(state.uploadFile);
+  });
   $('rv-go').addEventListener('click', () => {
+    if (chordsOnly() && doubtsLeft()) { startConfirmOrRender(); return; }
     if (review.remaining()) { review.openNext(); return; }
     $('dl-pdf').scrollIntoView({ behavior: 'smooth', block: 'center' });
     $('dl-pdf').focus({ preventScroll: true });
@@ -1188,13 +1306,15 @@ function guardContent() {
 /** 저장해도 되나 — 검사를 통과했거나 노란 마디를 사람이 다 확인했다 */
 function canExport() {
   const status = state.extraction?.qualityGate?.status;
+  if (chordsOnly()) return ['ready', 'marked'].includes(status) && doubtsLeft() === 0;
   return ['ready', 'marked'].includes(status) && review.remaining() === 0;
 }
 
 function updateExportState() {
   const status = state.extraction?.qualityGate?.status;
   const ready = status === 'ready';
-  const left = review.remaining();
+  const left = chordsOnly() ? doubtsLeft() : review.remaining();
+  const what = chordsOnly() ? '코드' : '마디';
   for (const id of ['dl-png', 'dl-pdf']) $(id).disabled = !canExport() || !state.rendered || state.exportBusy;
   // 차감은 **판독**에서 이미 끝났다. 저장은 값을 치른 결과를 받아 가는
   // 것이므로 공짜다 — 저장에서 깎으면 미리보기를 화면에서 가져가는 쪽이
@@ -1204,9 +1324,9 @@ function updateExportState() {
   // 지어낸 곳이 없다는 뜻이다. 약속을 한 줄로 유지한다.
   $('credit-notice').textContent = ready
     ? '이 판독에 크레딧 1개를 사용했습니다 · 키 변경과 저장은 몇 번이든 추가 차감 없음'
-      + (left ? ` · 고친 마디 ${left}개를 확인하면 저장할 수 있어요` : '')
+      + (left ? ` · 고친 ${what} ${left}개를 확인하면 저장할 수 있어요` : '')
     : status === 'marked'
-    ? (left ? `노란 마디 ${left}개를 확인하면 저장할 수 있어요 · ` : '')
+    ? (left ? `노란 ${what} ${left}개를 확인하면 저장할 수 있어요 · ` : '')
       + '확인이 필요한 결과라 크레딧을 차감하지 않았습니다'
     : '저장할 수 없는 악보라 크레딧을 차감하지 않았습니다';
 }
@@ -1337,6 +1457,7 @@ function applyLock() {
   const box = $('locked'), drop = $('drop');
   if (box) box.hidden = !locked;
   if (drop) drop.hidden = locked;
+  if ($('modes')) $('modes').hidden = locked;
   // 간편 로그인 버튼은 서버가 준비됐다고 할 때만 보여 준다
   let any = false;
   for (const b of document.querySelectorAll('[data-sso]')) {
@@ -1356,7 +1477,13 @@ async function refreshAccount() {
   const locked = !!account.authRequired && !account.authed;
   $('balance').textContent = account.master ? '마스터 · 무제한'
     : locked ? '로그인 필요'
-    : `체험 ${account.balance}크레딧`;
+    : `${account.monthly ? '베타' : '체험'} ${account.balance}크레딧`;
+  const beta = $('beta-note');
+  if (beta) {
+    beta.hidden = !account.monthly;
+    beta.textContent = `베타 기간에는 결제 없이 매달 ${account.monthly}크레딧까지 채워 드립니다`
+      + (account.dailyUser ? ` · 하루 ${account.dailyUser}장까지` : '');
+  }
   // 로그인 전에는 신원을 안 보여 준다 — 보여 줄 신원이 없다
   const av = $('who');
   if (av) {

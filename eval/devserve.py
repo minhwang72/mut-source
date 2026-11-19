@@ -35,6 +35,8 @@ print(f"{len(PAGES)}장 · 이미지 {len(BY_HASH)}장", flush=True)
 
 def extraction(name: str) -> dict:
     d = json.loads(PAGES[name].read_text())
+    if "struct" not in d:                  # eval/chords_sweep.py 는 판독 결과를 통째로 남긴다
+        return d
     ex = dict(d.get("ex") or {})
     ex["struct"] = d["struct"]
     ex.setdefault("qualityGate", d.get("gate"))

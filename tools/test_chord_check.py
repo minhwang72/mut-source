@@ -79,10 +79,60 @@ def test_merged_chord_flagged():
     assert flag_merged(ok, st2, [dict(GEO, index=0)]) == 0 and "review" not in st2[0]
 
 
+def test_doubt_marks_only_differing_chords():
+    # 코드만 바꾸기는 코드를 짚는다 — 다른 것만, 놓친 코드는 앞뒤를
+    from chord_check import _doubt_diff
+    ours = [chord("C", 10), chord("Am", 60), chord("F", 110), chord("G", 160)]
+    _doubt_diff(ours, [ChordAt(text=t, measure=1) for t in ["C", "Am7", "F", "G"]])
+    assert [bool(c.get("doubt")) for c in ours] == [False, True, False, False]
+    ours = [chord("C", 10), chord("F", 110), chord("G", 160)]
+    _doubt_diff(ours, [ChordAt(text=t, measure=1) for t in ["C", "Am", "F", "G"]])
+    assert [bool(c.get("doubt")) for c in ours] == [True, True, False]
+
+
+def test_leftover_chord_ink_becomes_doubt():
+    # t017-1 단2: 두 번째 판독이 본 'Cm7' 을 자리 못 잡아 옛 키 글자로 남았다
+    from chord_check import leftovers
+    chords = [chord("F7", 150), chord("Bb", 300)]
+    ink = ink_with(150, 300)
+    ink[72:80, 20:38] = True                           # 상자 밖, 코드 글자 높이의 잉크
+    ink[76:82, 60:64] = True                           # 마디 번호처럼 작은 글자 — 코드 아님
+    systems = [{"index": 0, "chords": chords}]
+    assert leftovers(systems, [dict(GEO, index=0)], ink, {0: ["Cm7", "F7", "Bb"]})["added"] == 1
+    got = systems[0]["chords"][0]
+    assert got["text"] == "Cm7" and got["doubt"] and got["missing"] and got["box"]["x"] == 20
+    # 앞에 마디 번호 같은 좁은 잉크가 먼저 있어도 폭이 맞는 쪽에 준다
+    ink2 = ink.copy(); ink2[72:80, 4:9] = True        # "9" 같은 한 글자
+    systems = [{"index": 0, "chords": [chord("F7", 150), chord("Bb", 300)]}]
+    leftovers(systems, [dict(GEO, index=0)], ink2, {0: ["Cm7", "F7", "Bb"]})
+    assert [c["box"]["x"] for c in systems[0]["chords"] if c.get("missing")] == [20]
+    # 두 번째 판독이 그 자리에 코드를 안 봤으면(마디 번호·기호) 세우지 않는다
+    systems = [{"index": 0, "chords": [chord("F7", 150), chord("Bb", 300)]}]
+    assert leftovers(systems, [dict(GEO, index=0)], ink, {0: ["F7", "Bb"]})["added"] == 0
+    # 코드를 하나도 못 읽은 단은 다른 단의 코드 띠를 빌려 세운다(t030-2 단4·5)
+    systems = [{"index": 0, "chords": [dict(chord("F7", 150), box={"x": 150, "y": 270, "w": 20, "h": 12}),
+                                       dict(chord("Bb", 300), box={"x": 300, "y": 270, "w": 20, "h": 12})]}]
+    ink4 = np.zeros((800, 400), bool)
+    ink4[270:282, 150:170] = True; ink4[270:282, 300:320] = True
+    ink4[570:582, 50:60] = True; ink4[570:582, 200:210] = True
+    geo2 = [dict(GEO, index=0, staffTop=300, staffBottom=340), dict(GEO, index=1, staffTop=600, staffBottom=640)]
+    r = leftovers(systems, geo2, ink4, {0: ["F7", "Bb"], 1: ["A", "B"]})
+    assert r["added"] == 2 and not r["unplaced"], r
+    assert [(c["text"], c["box"]["x"]) for c in systems[1]["chords"]] == [("A", 50), ("B", 200)]
+    # 자리를 못 잡은 코드는 세어 돌려준다
+    r = leftovers([{"index": 0, "chords": [chord("F7", 150)]}], [dict(GEO, index=0)], ink_with(150), {0: ["F7", "G"]})
+    assert r["unplaced"] == {0: 1}, r
+    # 다 덮여 있으면 아무것도 안 세운다
+    systems = [{"index": 0, "chords": [chord("F7", 150), chord("Bb", 300)]}]
+    assert leftovers(systems, [dict(GEO, index=0)], ink_with(150, 300), {0: ["F7", "Bb"]})["added"] == 0
+
+
 if __name__ == "__main__":
     test_norm(); test_text_fixed_and_missing_added_at_ink(); test_measure_numbers_not_trusted()
     test_refuse_when_place_or_root_disagrees(); test_align_strip_primary()
     test_merged_chord_flagged()
+    test_doubt_marks_only_differing_chords()
+    test_leftover_chord_ink_becomes_doubt()
     print("ok")
 
 

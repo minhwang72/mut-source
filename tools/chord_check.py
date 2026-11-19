@@ -510,6 +510,30 @@ def _disagree(ours: list[dict], theirs: list, g: dict, sysd: dict | None):
     return sorted(out) or None
 
 
+def _doubt_diff(ours: list[dict], theirs: list) -> None:
+    """**갈린 코드 하나하나에 doubt 를 단다** — 코드만 바꾸기는 마디가 아니라 코드를 짚는다.
+    두 번째 판독에만 있는 코드(우리가 놓친 것)는 앞뒤 코드를 짚는다 — 놓친 코드는
+    원본 글자 그대로 남아 옛 키로 찍히므로 반드시 사람이 봐야 한다."""
+    from difflib import SequenceMatcher
+    a = [norm(c["text"]) for c in ours]
+    b = [norm(c.text) for c in theirs]
+    for tag, i1, i2, _, _ in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        hit = ours[i1:i2] or ours[max(0, i1 - 1):i1 + 1]
+        for c in hit:
+            c["doubt"] = True
+
+
+def _doubt_near(chords: list[dict], c: dict) -> None:
+    """표결이 셋 다 갈린 코드 — 같은 자리의 원래 코드(없으면 가장 가까운 것)에 doubt"""
+    live = [x for x in chords if not x.get("dropped")]
+    if not live:
+        return
+    x0 = c["box"]["x"] + c["box"].get("w", 0) / 2
+    min(live, key=lambda x: abs(x["box"]["x"] + x["box"].get("w", 0) / 2 - x0))["doubt"] = True
+
+
 def check(img, extraction: dict, ink=None) -> dict:
     """두 번째 판독으로 코드를 맞추고, 못 맞춘 단에 확인 필요를 단다. 통계를 돌려준다."""
     geo = (extraction.get("geometry") or {}).get("systems") or []
@@ -520,7 +544,8 @@ def check(img, extraction: dict, ink=None) -> dict:
     reads = {r.system - 1: r.chords for r in read(strip, len(idx))}
     systems = extraction.setdefault("systems", [])
     by = {s.get("index", i): s for i, s in enumerate(systems)}
-    stat = {"systems": len(idx), "fixed": 0, "diff": 0, "where": []}
+    stat = {"systems": len(idx), "fixed": 0, "diff": 0, "where": [],
+            "_theirs": {k: [c.text for c in v if c.text.strip()] for k, v in reads.items()}}
     # 첫 판독 상자가 없는 단의 코드 띠 높이 — 이 장 다른 단 코드의 오선 위 높이(중앙값)
     tops = {g.get("index", i): float(g["staffTop"]) for i, g in enumerate(geo)}
     d0, d1 = [], []
@@ -557,6 +582,7 @@ def check(img, extraction: dict, ink=None) -> dict:
         else:
             sysd_s = next((s for s in st if s.get("system", -1) == k), None)
             _review(st, k, _disagree(ours, theirs, g, sysd_s))
+            _doubt_diff(ours, theirs)
             stat["diff"] += 1
     # **세 번째 표.** 두 판독의 글자가 다른 코드와 띠 판독만 읽은 코드는 그 자리만
     # 잘라 한 번 더 읽는다. 실측 t010-8 단1: 첫 판독 'E' 가 맞았는데 띠 판독이 윗단
@@ -575,6 +601,7 @@ def check(img, extraction: dict, ink=None) -> dict:
                 c.pop("recheck", None)
                 continue
             # 셋이 다 다르다 — 그 코드가 놓인 마디만 확인 필요로
+            _doubt_near((by.get(k) or {}).get("chords") or [], c)
             g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)
             sysd_s = next((s for s in st if s.get("system", -1) == k), None)
             n = max(1, (sysd_s or {}).get("measures") or 1)
@@ -610,12 +637,152 @@ def check(img, extraction: dict, ink=None) -> dict:
 _MERGED = re.compile(r"\)\s*[A-G]")
 
 
+def leftovers(systems: list[dict], geo: list[dict], ink, theirs_by: dict | None = None) -> dict:
+    """
+    **코드 띠에 남은, 어느 코드 상자에도 안 든 글자 잉크를 "놓친 코드"로 세운다.**
+    코드만 바꾸기 전용 안전망 — 놓친 코드는 원본 글자 그대로 옛 키로 찍힌다(실측
+    t017-1 단2 'Cm7': 두 번째 판독은 봤는데 align 이 자리를 못 잡아 그대로 남았다).
+
+    **두 번째 판독이 그 자리에 코드를 봤을 때만** 세운다 — 잉크만 보면 마디 번호·
+    리허설 기호까지 걸린다(실측 33장 191곳). 글자는 두 번째 판독에서 채운다. 코드가
+    하나도 없는 단은 이 장 다른 단의 코드 띠 높이를 빌린다(실측 원본 대조: 놓친 코드
+    대부분이 단 하나를 통째로 놓친 것 — t018-9·t030-2·t041-09·t040-6).
+    전부 doubt. 자리를 끝내 못 잡은 코드 수를 단별로 돌려준다(unplaced).
+    """
+    from difflib import SequenceMatcher
+    added, unplaced = 0, {}
+    every = [c for s in systems for c in s.get("chords") or [] if not c.get("dropped")]
+    tops = {g.get("index", i): float(g["staffTop"]) for i, g in enumerate(geo)}
+    med = lambda v: sorted(v)[len(v) // 2]
+
+    def tight(c):
+        """상자 안 **실제 잉크**의 위·아래. 고친 코드 상자는 띠 높이로 부풀어 있다
+        (실측 t030-2: 상자 21.8px, 글자 11px — 높이 비교가 진짜 코드를 버렸다)"""
+        b = c["box"]
+        rows = ink[max(0, int(b["y"])):int(b["y"] + b["h"]) + 1,
+                   max(0, int(b["x"])):int(b["x"] + b["w"]) + 1].any(axis=1).nonzero()[0]
+        return (b["y"], b["y"] + b["h"]) if not len(rows) else \
+            (int(b["y"]) + rows[0], int(b["y"]) + rows[-1] + 1)
+
+    page = [(tops[s.get("index")], tight(c)) for s in systems for c in s.get("chords") or []
+            if not c.get("dropped") and s.get("index") in tops]
+    band = (med([t - a for t, (a, b) in page]), med([t - b for t, (a, b) in page])) if page else None
+    cw0 = med([c["box"]["w"] / _len(c["text"]) for c in every]) if every else None
+    by = {s.get("index"): s for s in systems}
+    for i, g in enumerate(geo):
+        k = g.get("index", i)
+        theirs = (theirs_by or {}).get(k) or []
+        s = by.get(k)
+        chords = (s or {}).get("chords") or []
+        live = [c for c in chords if not c.get("dropped")]
+        sp, top = float(g.get("spacing") or 10), float(g["staffTop"])
+        if live:
+            y0 = min(c["box"]["y"] for c in live) - sp * 0.3
+            y1 = min(max(c["box"]["y"] + c["box"]["h"] for c in live) + sp * 0.3, top - sp * 0.3)
+            tb = [tight(c) for c in live]
+            ch = med([b - a for a, b in tb])
+            base = med([b for a, b in tb])
+            cw = med([c["box"]["w"] / _len(c["text"]) for c in live])
+        elif theirs and band and cw0:
+            y0, y1 = top - band[0] - sp * 0.3, min(top - band[1] + sp * 0.3, top - sp * 0.3)
+            ch, base, cw = band[0] - band[1], top - band[1], cw0
+        else:
+            continue
+        taken = [(c["box"]["x"] - sp * 0.3, c["box"]["x"] + c["box"]["w"] + sp * 0.3) for c in chords]
+        new = []
+        for r0, r1 in ink_runs(ink, float(g.get("left", 0)) - sp * 1.5,
+                               float(g.get("right", ink.shape[1])) + sp, y0, y1, sp, gap=0.5, minw=0.3):
+            if any(r0 < t1 and t0 < r1 for t0, t1 in taken):
+                continue
+            rows = ink[int(y0):int(y1), int(r0):int(r1)].any(axis=1).nonzero()[0]
+            if not len(rows):
+                continue
+            ra, rb = y0 + rows[0], y0 + rows[-1] + 1
+            # 코드 글자 같은가 — 높이와 바닥선이 이 단 코드와 맞아야(마디 번호·점·괄호는 빠진다)
+            if abs(math.log((rb - ra) / ch)) > 0.4 or abs(rb - base) > ch * 0.45:
+                continue
+            new.append({"text": "", "confidence": 0.0, "doubt": True, "missing": True,
+                        "box": {"x": int(r0), "y": int(ra), "w": int(r1 - r0), "h": int(rb - ra)}})
+        spare = []
+        for tag, i1, i2, j1, j2 in SequenceMatcher(None, [norm(c["text"]) for c in live],
+                                                   [norm(t) for t in theirs], autojunk=False).get_opcodes():
+            if tag in ("insert", "replace") and j2 - j1 > i2 - i1:
+                lo = live[i1 - 1]["box"]["x"] if i1 > 0 else -1e9
+                hi = live[i2]["box"]["x"] if i2 < len(live) else 1e9
+                spare += [(lo, hi, t) for t in theirs[j1 + (i2 - i1):j2]]
+        # 같은 사이에 든 코드들을 그 사이 잉크에 **차례를 지켜** 준다 — 폭이 글자 수에
+        # 가장 맞는 짝짓기(앞에서부터 주면 단 첫머리 마디 번호 '9' 가 'Cm7' 을 가져갔다)
+        groups = {}
+        for lo, hi, t in spare:
+            groups.setdefault((lo, hi), []).append(t)
+        miss = 0
+        for (lo, hi), texts in groups.items():
+            runs = [c for c in new if not c["text"] and lo < c["box"]["x"] < hi]
+            got = _match_runs(runs, texts, cw)
+            miss += len(texts) - len(got)
+            for c, t in got:
+                c["text"] = t
+        new = [c for c in new if c["text"]]
+        if miss:
+            unplaced[k] = miss
+        if not new:
+            continue
+        if s is None:
+            s = {"index": k, "page": 0, "staffTop": g["staffTop"],
+                 "staffBottom": g.get("staffBottom"), "chords": []}
+            systems.append(s)
+            by[k] = s
+        s["chords"] = sorted(chords + new, key=lambda c: c["box"]["x"])
+        added += len(new)
+    systems.sort(key=lambda s: s.get("index", 0))
+    return {"added": added, "unplaced": unplaced}
+
+
+def _match_runs(runs: list[dict], texts: list[str], cw: float) -> list[tuple]:
+    """잉크 조각과 코드 글자를 **순서대로** 짝짓는다. 값 = 폭이 글자 수와 다른 정도,
+    조각을 버리면 0.6, 코드를 못 놓으면 1.5. 짝지은 (조각, 글자) 목록."""
+    runs = sorted(runs, key=lambda c: c["box"]["x"])
+    n, m = len(runs), len(texts)
+    INF = float("inf")
+    best = [[INF] * (m + 1) for _ in range(n + 1)]
+    best[n][m] = 0.0
+    for i in range(n, -1, -1):
+        for j in range(m, -1, -1):
+            if i == n and j == m:
+                continue
+            o = INF
+            if i < n:
+                o = min(o, best[i + 1][j] + 0.6)
+            if j < m:
+                o = min(o, best[i][j + 1] + 1.5)
+            if i < n and j < m:
+                fit = abs(math.log(max(1, runs[i]["box"]["w"]) / (cw * _len(texts[j]))))
+                if fit < 1.2:
+                    o = min(o, best[i + 1][j + 1] + fit)
+            best[i][j] = o
+    out, i, j = [], 0, 0
+    while i < n or j < m:
+        if i < n and j < m:
+            fit = abs(math.log(max(1, runs[i]["box"]["w"]) / (cw * _len(texts[j]))))
+            if fit < 1.2 and abs(best[i][j] - (best[i + 1][j + 1] + fit)) < 1e-9:
+                out.append((runs[i], texts[j]))
+                i, j = i + 1, j + 1
+                continue
+        if i < n and abs(best[i][j] - (best[i + 1][j] + 0.6)) < 1e-9:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
 def flag_merged(systems: list[dict], st: list[dict], geo: list[dict]) -> int:
     hit = 0
     for s in systems:
         bad = [c for c in s.get("chords") or [] if not c.get("dropped") and _MERGED.search(c["text"])]
         if not bad:
             continue
+        for c in bad:
+            c["doubt"] = True
         k = s.get("index")
         g = next((g for i, g in enumerate(geo) if g.get("index", i) == k), None)
         sysd = next((x for x in st if x.get("system", -1) == k), None)

@@ -6,10 +6,11 @@ export async function request(path, options = {}) {
   return data;
 }
 
-export async function readScore(file, { signal, key, time, onProgress = () => {} } = {}) {
+export async function readScore(file, { signal, key, time, output, onProgress = () => {} } = {}) {
   const headers = { 'Content-Type': file.type || 'application/octet-stream' };
   if (key) headers['X-Key-Hint'] = key;
   if (time) headers['X-Time-Signature'] = time;
+  if (output) headers['X-Output'] = output;
   const job = await request('/api/jobs', { method: 'POST', headers, body: file, signal });
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {

@@ -368,7 +368,7 @@ class Stopwatch:
                 "stages": {n: round(v, 2) for n, v in self.marks}}
 
 
-def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
+def read_sheet(image_bytes: bytes, key_hint: str | None, output: str = "redraw") -> dict:
     """
     이미지 → 구조 데이터. 여기서 이미지는 메모리에만 존재하고 저장되지 않는다.
     """
@@ -383,7 +383,7 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
     # 나란히 돈다(monsil 실측 장당 16초 — 우리 쪽 25초 안에 끝난다).
     import homr_runner
     homr_pool = homr_task = None
-    if homr_runner.available():
+    if output != "chords" and homr_runner.available():
         homr_pool = _cf.ThreadPoolExecutor(max_workers=1)
         homr_task = homr_pool.submit(homr_runner.read, image_bytes)
     img = prepare.load(io.BytesIO(image_bytes))
@@ -459,6 +459,8 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
                                   "basis": why}
     src_fifths = render.call_engine(meta["key"], 0, [])["fifthsFrom"]
     sw.lap("엔진호출")
+    if output == "chords":
+        return _chords_only(extraction, img, ink, staves, sw)
     # ── 렌더용 확대 ─────────────────────────────────────────────────
     # 판독은 원본 크기에서 끝났다(확대본에서 코드를 찾으면 오선 위 흐릿한 띠가
     # 밴드를 삼킨다 — prepare 주석 참고). 이제 **렌더 품질**을 위해 확대하고,
@@ -589,6 +591,7 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
         import chord_check
         try:
             extraction["chordCheck"] = chord_check.check(img, extraction, ink)
+            extraction["chordCheck"].pop("_theirs", None)
         except Exception as e:                   # noqa: BLE001
             print(f"  코드 재판독 실패: {e}", file=sys.stderr)
             extraction["chordCheck"] = {"error": str(e)[:200]}
@@ -597,6 +600,61 @@ def read_sheet(image_bytes: bytes, key_hint: str | None) -> dict:
         extraction["qualityGate"] = local_reader.quality_gate(extraction, gate_issues)
     sw.lap("품질게이트")
     counts_pool.shutdown(wait=False)
+    extraction["timing"] = sw.report()
+    return extraction
+
+
+def _chords_only(extraction: dict, img, ink, staves, sw) -> dict:
+    """
+    **코드만 바꾸기.** 음표는 읽지 않는다 — 원본 위에서 코드 글자만 바꿔 쓰므로
+    음표·가사·기호 판독 오류가 결과에 나올 수 없다. 개수 LLM·homr·음표 검출을 다
+    건너뛰어 원가가 코드 판독 둘(장당 약 25원)뿐이다.
+
+    코드는 두 번 읽어 맞대고(chord_check), 갈린 코드에만 doubt 를 단다. 하나라도
+    남으면 marked(사람 확인 뒤 저장, 과금 안 함), 없으면 ready.
+    """
+    import sheetcv as cv
+    import chord_check
+
+    sp = cv.median_spacing(staves)
+    extraction["geometry"] = {"spacing": sp, "scale": 1.0, "systems": [
+        {"index": i, "staffTop": st.top, "staffBottom": st.bottom,
+         "left": st.left, "right": st.right, "spacing": sp}
+        for i, st in enumerate(staves)]}
+    extraction["imageSize"] = {"w": img.width, "h": img.height}
+    # chord_check 가 확인 필요를 다는 그릇 — 코드만 바꾸기에서는 쓰지 않고 버린다
+    extraction["struct"] = {"systems": [{"system": i, "measures": 1, "notes": []}
+                                        for i in range(len(staves))]}
+    issues = []
+    try:
+        extraction["chordCheck"] = chord_check.check(img, extraction, ink)
+    except Exception as e:                       # noqa: BLE001
+        print(f"  코드 재판독 실패: {e}", file=sys.stderr)
+        extraction["chordCheck"] = {"error": str(e)[:200]}
+        issues.append("코드를 한 번 더 읽지 못했습니다 — 코드를 모두 확인해 주세요")
+        for sysd in extraction["systems"]:
+            for c in sysd.get("chords") or []:
+                c["doubt"] = True
+    extraction.pop("struct", None)
+    cc = extraction["chordCheck"]
+    lo = chord_check.leftovers(
+        extraction["systems"], extraction["geometry"]["systems"], ink, cc.pop("_theirs", None))
+    cc["missing"] = lo["added"]
+    # **두 번째 판독이 본 코드를 끝내 못 놓은 단** — 그 단은 옛 키 글자가 남을 수 있다.
+    # 짚을 자리가 없으니 장 전체를 저장 불가로 둔다(과금 안 함). 원본 대조에서 잡힌
+    # 표시 밖 오류가 전부 "놓친 코드"였다
+    if lo["unplaced"]:
+        issues.append("코드 " + str(sum(lo["unplaced"].values())) + "개의 자리를 찾지 못했습니다 — "
+                      "악보 새로 그리기로 변환해 주세요")
+    doubts = [[sysd.get("index", i), j] for i, sysd in enumerate(extraction["systems"])
+              for j, c in enumerate(sysd.get("chords") or [])
+              if c.get("doubt") and not c.get("dropped")]
+    extraction["output"] = "chords"
+    extraction["qualityGate"] = {
+        "status": ("needs_review" if lo["unplaced"] else "marked" if doubts else "ready"),
+        "flagged": doubts, "hard": list(issues) if lo["unplaced"] else [],
+        "blocking": [], "notes": [], "issues": issues, "checkedBy": "chord_check"}
+    sw.lap("코드재판독")
     extraction["timing"] = sw.report()
     return extraction
 
@@ -868,7 +926,7 @@ def read_with_mode(blob: bytes, opts: dict, progress=None) -> dict:
     step = progress or (lambda *_a: None)
     if STATE["mode"] == "ai":
         step("ai", 10)
-        return read_sheet(blob, opts.get("keyHint"))
+        return read_sheet(blob, opts.get("keyHint"), opts.get("output") or "redraw")
     import local_reader
     return local_reader.read_sheet_local(blob, opts.get("keyHint"),
                                          opts.get("timeSignature"), step)
@@ -1552,7 +1610,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         opts = {"keyHint": self.headers.get("X-Key-Hint") or None,
                 "timeSignature": self.headers.get("X-Time-Signature") or None,
-                "mode": STATE["mode"]}
+                "mode": STATE["mode"],
+                "output": self.headers.get("X-Output") or "redraw"}
         if not self._valid_options(opts):
             return
         try:
@@ -1573,6 +1632,9 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if signature and signature not in ('2/4','3/4','4/4','6/8','9/8','12/8'):
             self._json(400, {'error': '지원하는 박자를 선택해 주세요.'})
+            return False
+        if opts.get('output') not in (None, 'redraw', 'chords'):
+            self._json(400, {'error': '변환 방식이 올바르지 않습니다.'})
             return False
         return True
 
@@ -1696,6 +1758,11 @@ def main() -> None:
     ap.add_argument("--mode", choices=("local", "ai"), default="ai",
                     help="ai: 단별 개수만 LLM에 묻는다(기본) · local: 외부 호출 없음")
     ap.add_argument("--trial-balance", type=int, default=5)
+    # 베타 상한(11/19 결정): 매달 20크레딧까지 채움 · 한 사람 하루 15장 · 전체 하루 100장.
+    # 전체 100장이 전부 새로 그리기여도 하루 약 9천 원이 최대다
+    ap.add_argument("--monthly", type=int, default=20)
+    ap.add_argument("--daily-user", type=int, default=15)
+    ap.add_argument("--daily-all", type=int, default=100)
     ap.add_argument("--require-auth", action="store_true",
                     help="로그인한 세션만 판독을 시작할 수 있게 한다. "
                          "결제·로그인이 붙기 전까지 공개 주소를 잠그는 용도")
@@ -1727,6 +1794,8 @@ def main() -> None:
     warm_models()
     srv = build_server(args.port, args.mode, host=args.host, origin=args.origin,
                        trial_balance=args.trial_balance,
+                       monthly=args.monthly, daily_user=args.daily_user,
+                       daily_all=args.daily_all,
                        workers=args.workers, ttl=args.ttl)
     print(f"뮤트 개발 서버 → http://127.0.0.1:{srv.server_address[1]} "
           f"[{args.mode}]", file=sys.stderr)

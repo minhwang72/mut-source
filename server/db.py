@@ -238,6 +238,18 @@ def grant(uid: str, n: int, ref: str, reason: str) -> int:
     return b
 
 
+def monthly_topup(uid: str, n: int) -> None:
+    """
+    **베타 무료분.** 그 달 처음 보면 잔액을 n 까지 채운다(이미 n 이상이면 그대로).
+    채운 기록(reason='monthly')이 이번 달에 있으면 아무것도 안 한다.
+    """
+    month = time.strftime("%Y-%m")
+    if one("SELECT 1 x FROM credit_log WHERE user_id = %s AND reason = 'monthly' "
+           "AND ref = %s LIMIT 1", uid, month):
+        return
+    grant(uid, max(0, n - balance(uid)), month, "monthly")
+
+
 def ledger(uid: str, limit: int = 50) -> list[dict]:
     return q("SELECT delta, reason, ref, balance_after, at FROM credit_log "
              "WHERE user_id = %s ORDER BY id DESC LIMIT %s", uid, limit)
