@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -31,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 #
 # ⚠️ 근거는 인쇄 악보 1장이다. 손글씨·저품질 악보로 재검증 전까지는
 #    --model claude-opus-5 로 되돌릴 수 있게 유지한다.
-MODEL = "claude-haiku-4-5"
+# 11/19 Haiku 5.5 로 교체(33장: 코드 다시 읽기와 갈림 84→78, 값 1/8)
+MODEL = os.environ.get("MUTE_CHORDS_MODEL") or "claude-haiku-5-5"
 # 라벨 글자는 LLM 이 읽는다 — 맥에만 있는 경로를 박아두면 리눅스 컨테이너에서
 # 판독이 통째로 죽는다. 있는 걸 찾아 쓰고, 없으면 Pillow 기본 글꼴로 버틴다.
 LABEL_FONTS = (

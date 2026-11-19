@@ -23,6 +23,7 @@ import argparse
 import base64
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -55,6 +56,10 @@ PROMPT = """악보 한 단(system)입니다. **개수만** 세어 주세요. 음
 # 단에서 구조 출력이 나오기 전에 잘리고, 그러면 parsed_output 이 None 으로
 # 와서 쪽 전체가 죽는다(실측: camp0814b-01 단5). 생각을 켤 때는 넉넉히 준다.
 MAX_TOKENS = 2000
+# 11/19 holdout B 정답 대조: Sonnet 5.5 가 Opus 5 와 오답 수 같고 노란 밖 오답은
+# 더 적었다(4→1), 값은 40%. 최종 개수는 검출기가 정하고 여기 개수는 길잡이라서.
+# 측정용으로 바꿔 끼울 수 있게 둔다(MUTE_COUNTS_MODEL)
+MODEL = os.environ.get("MUTE_COUNTS_MODEL") or "claude-sonnet-5-5"
 MAX_TOKENS_THINK = 8000
 
 
@@ -82,6 +87,12 @@ def read_system(img, model: str, think: bool = False) -> dict:
 
     def call(mt: int, thinking: bool):
         kw = {} if thinking else {"thinking": {"type": "disabled"}}
+        if model.startswith("claude-opus-5-5"):
+            # Opus 5.5 는 생각을 끌 수 없다(disabled 400) — 짧게 생각하게 하고
+            # 생각이 max_tokens 를 먹으니 넉넉히 준다
+            kw, mt = {"output_config": {"effort": "low"}}, max(mt, MAX_TOKENS_THINK)
+        elif model.startswith("claude-sonnet-5-5") and not thinking:
+            kw = {"thinking": {"type": "between_tools"}}   # 5.5 의 "생각 끄기"(disabled 는 400)
         return RS._with_retry(lambda: client.messages.parse(
             model=model, max_tokens=mt,
             messages=[{"role": "user", "content": [
@@ -113,7 +124,7 @@ def read_system(img, model: str, think: bool = False) -> dict:
 TARGET_SPACING = 22.0
 
 
-def read_page(img, model: str = "claude-opus-5", zoom: float | None = None,
+def read_page(img, model: str = MODEL, zoom: float | None = None,
               think: bool = False, target: float = TARGET_SPACING) -> dict:
     """쪽 전체를 단별로 세어 counts 를 만든다."""
     import sheetcv as cv
@@ -158,7 +169,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="단별 음표·쉼표 개수만 판독")
     ap.add_argument("image")
     ap.add_argument("-o", "--out", required=True)
-    ap.add_argument("--model", default="claude-opus-5")
+    ap.add_argument("--model", default=MODEL)
     ap.add_argument("--target", type=float, default=TARGET_SPACING,
                     help="목표 오선 간격(px). 작을수록 입력 토큰이 줄어든다")
     ap.add_argument("--think", action="store_true",
